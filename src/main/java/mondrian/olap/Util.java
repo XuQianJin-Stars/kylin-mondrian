@@ -2012,7 +2012,8 @@ public class Util extends XOMUtil {
     {
         Object[] a = collection.toArray(new Object[collection.size()]);
         //noinspection unchecked
-        Arrays.sort(a, (Comparator<? super Object>) comparator);
+//        Arrays.sort(a, (Comparator<? super Object>) comparator);
+        Arrays.sort(a, (Comparator<Object>) comparator);
         return cast(Arrays.asList(a));
     }
 
