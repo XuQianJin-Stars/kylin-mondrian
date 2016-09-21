@@ -39,7 +39,7 @@ public class KylinDialect extends JdbcDialectImpl {
 
     @Override
     public boolean allowsCountDistinct() {
-        return false;
+        return true;
     }
 
     @Override
