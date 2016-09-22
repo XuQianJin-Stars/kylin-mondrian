@@ -833,7 +833,7 @@ case-sensitive matching when looking up identifiers. The default is
 false.
         </Description>
         <Type>boolean</Type>
-        <Default>false</Default>
+        <Default>true</Default>
     </PropertyDefinition>
     <PropertyDefinition>
         <Name>MaxRows</Name>
