@@ -1115,6 +1115,10 @@ public class SegmentLoader {
             return columns[columnIndex].getInt(currentRow);
         }
 
+        public long getLong(int columnIndex) {
+            return columns[columnIndex].getLong(currentRow);
+        }
+
         public double getDouble(int columnIndex) {
             return columns[columnIndex].getDouble(currentRow);
         }
@@ -1190,6 +1194,10 @@ public class SegmentLoader {
             }
 
             public double getDouble(int row) {
+                throw new UnsupportedOperationException();
+            }
+
+            public long getLong(int row) {
                 throw new UnsupportedOperationException();
             }
 

@@ -86,13 +86,21 @@ public class SegmentBuilder {
                     axes,
                     (int[]) body.getValueArray(),
                     body.getNullValueIndicators());
-        } else if (body instanceof DenseObjectSegmentBody) {
+        } else if (body instanceof DenseLongSegmentBody) {
+            dataSet =
+                    new DenseLongSegmentDataset(
+                            axes,
+                            (long[]) body.getValueArray(),
+                            body.getNullValueIndicators());
+        }
+        else if (body instanceof DenseObjectSegmentBody) {
             dataSet =
                 new DenseObjectSegmentDataset(
                     axes, (Object[]) body.getValueArray());
         } else if (body instanceof SparseSegmentBody) {
             dataSet = new SparseSegmentDataset(body.getValueMap());
-        } else {
+        }
+        else {
             throw Util.newInternal(
                 "Unknown segment body type: " + body.getClass() + ": " + body);
         }

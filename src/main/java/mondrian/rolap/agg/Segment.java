@@ -350,6 +350,8 @@ public class Segment {
                 return new DenseIntSegmentDataset(axes, size);
             case DOUBLE:
                 return new DenseDoubleSegmentDataset(axes, size);
+            case LONG:
+                return new DenseLongSegmentDataset(axes, size);
             default:
                 throw Util.unexpected(type);
             }
