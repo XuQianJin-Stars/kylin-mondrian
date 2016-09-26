@@ -9,8 +9,12 @@
 */
 package mondrian.spi.impl;
 
+import mondrian.rolap.SqlStatement;
+
 import java.sql.Connection;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.Types;
 
 /**
  * Implementation of {@link mondrian.spi.Dialect} for Kylin.
@@ -45,5 +49,11 @@ public class KylinDialect extends JdbcDialectImpl {
     @Override
     public boolean allowsJoinOn() {
         return true;
+    }
+
+    @Override
+    public SqlStatement.Type getType(ResultSetMetaData metaData, int columnIndex) throws SQLException {
+        return metaData.getColumnType(columnIndex + 1) == Types.BIGINT
+                ? SqlStatement.Type.LONG : super.getType(metaData, columnIndex);
     }
 }
