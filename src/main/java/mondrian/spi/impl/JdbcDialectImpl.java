@@ -1393,43 +1393,44 @@ public class JdbcDialectImpl implements Dialect {
         DatabaseProduct databaseProduct,
         Connection connection)
     {
-        Statement statement = null;
-        ResultSet resultSet = null;
-
-        String dbProduct = databaseProduct.name().toLowerCase();
-
-        try {
-            // Quick and dirty check first.
-            if (connection.getMetaData().getDatabaseProductName()
-                .toLowerCase().contains(dbProduct))
-            {
-                LOGGER.debug("Using " + databaseProduct.name() + " dialect");
-                return true;
-            }
-
-            // Let's try using version().
-            statement = connection.createStatement();
-            resultSet = statement.executeQuery("select version()");
-            if (resultSet.next()) {
-                String version = resultSet.getString(1);
-                LOGGER.debug("Version=" + version);
-                if (version != null) {
-                    if (version.toLowerCase().contains(dbProduct)) {
-                        LOGGER.info(
-                            "Using " + databaseProduct.name() + " dialect");
-                        return true;
-                    }
-                }
-            }
-            LOGGER.debug("NOT Using " + databaseProduct.name() + " dialect");
-            return false;
-        } catch (SQLException e) {
-            LOGGER.debug(
-                "NOT Using " + databaseProduct.name() + " dialect.", e);
-            return false;
-        } finally {
-            Util.close(resultSet, statement, null);
-        }
+          return false;
+//        Statement statement = null;
+//        ResultSet resultSet = null;
+//
+//        String dbProduct = databaseProduct.name().toLowerCase();
+//
+//        try {
+//            // Quick and dirty check first.
+//            if (connection.getMetaData().getDatabaseProductName()
+//                .toLowerCase().contains(dbProduct))
+//            {
+//                LOGGER.debug("Using " + databaseProduct.name() + " dialect");
+//                return true;
+//            }
+//
+//            // Let's try using version().
+//            statement = connection.createStatement();
+//            resultSet = statement.executeQuery("select version()");
+//            if (resultSet.next()) {
+//                String version = resultSet.getString(1);
+//                LOGGER.debug("Version=" + version);
+//                if (version != null) {
+//                    if (version.toLowerCase().contains(dbProduct)) {
+//                        LOGGER.info(
+//                            "Using " + databaseProduct.name() + " dialect");
+//                        return true;
+//                    }
+//                }
+//            }
+//            LOGGER.debug("NOT Using " + databaseProduct.name() + " dialect");
+//            return false;
+//        } catch (SQLException e) {
+//            LOGGER.debug(
+//                "NOT Using " + databaseProduct.name() + " dialect.", e);
+//            return false;
+//        } finally {
+//            Util.close(resultSet, statement, null);
+//        }
     }
 }
 
