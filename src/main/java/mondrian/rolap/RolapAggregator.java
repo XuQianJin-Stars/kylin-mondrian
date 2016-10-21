@@ -59,6 +59,9 @@ public abstract class RolapAggregator
                             if (data instanceof Double) {
                                 data = ((Double) data).intValue();
                             }
+                            if (data instanceof Long) {
+                                data = ((Long) data).intValue();
+                            }
                             sumInt += (Integer) data;
                         }
                     }
