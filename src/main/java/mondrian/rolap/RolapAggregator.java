@@ -132,6 +132,9 @@ public abstract class RolapAggregator
                     int minInt = Integer.MAX_VALUE;
                     for (Object data : rawData) {
                         if (data != null) {
+                            if (data instanceof Long) {
+                                data = ((Long) data).intValue();
+                            }
                             minInt = Math.min(minInt, (Integer)data);
                         }
                     }
@@ -183,6 +186,9 @@ public abstract class RolapAggregator
                     int maxInt = Integer.MIN_VALUE;
                     for (Object data : rawData) {
                         if (data != null) {
+                            if (data instanceof Long) {
+                                data = ((Long) data).intValue();
+                            }
                             maxInt = Math.max(maxInt, (Integer)data);
                         }
                     }
