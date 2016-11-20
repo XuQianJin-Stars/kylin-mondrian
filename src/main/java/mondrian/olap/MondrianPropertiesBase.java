@@ -10,6 +10,7 @@
 */
 package mondrian.olap;
 
+import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
 
 import org.eigenbase.util.property.TriggerableProperties;
@@ -177,6 +178,22 @@ public abstract class MondrianPropertiesBase extends TriggerableProperties {
         }
     }
 
+
+    //use mondrian.properties under $KYANALYZER_HOME first
+    static String getPropertiesPath() {
+        String kyConfHome = System.getProperty("KYANALYZER_HOME");
+        if (!StringUtils.isEmpty(kyConfHome)) {
+            return kyConfHome + File.separator + "conf" + File.separator +mondrianDotProperties;
+        }
+
+        String kyHome = System.getenv("KYANALYZER_HOME");
+        if (!StringUtils.isEmpty(kyHome)){
+            String path = kyHome + File.separator + "conf" + File.separator +mondrianDotProperties;
+            return path;
+        }
+        return "";
+    }
+
     /**
      * Loads this property set from: the file "$PWD/mondrian.properties" (if it
      * exists); the "mondrian.properties" in the CLASSPATH; and from the system
@@ -188,7 +205,7 @@ public abstract class MondrianPropertiesBase extends TriggerableProperties {
         loadIfStale(propertySource);
 
         URL url = null;
-        File file = new File(mondrianDotProperties);
+        File file = new File(getPropertiesPath());
         if (file.exists() && file.isFile()) {
             // Read properties file "mondrian.properties" from PWD, if it
             // exists.
