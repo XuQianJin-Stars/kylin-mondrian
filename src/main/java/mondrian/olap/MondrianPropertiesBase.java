@@ -191,7 +191,7 @@ public abstract class MondrianPropertiesBase extends TriggerableProperties {
             String path = kyHome + File.separator + "conf" + File.separator +mondrianDotProperties;
             return path;
         }
-        return "";
+        return mondrianDotProperties;
     }
 
     /**

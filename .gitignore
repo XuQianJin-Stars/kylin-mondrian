@@ -26,4 +26,4 @@ lib/jpivot.war
 lib/mondrian.dtd
 lib/mondrian3.dtd
 mondrian.properties.template
-
+.DS_Store
