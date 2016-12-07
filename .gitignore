@@ -1,8 +1,8 @@
-dev-lib
 dist
 
 *.jar
 !build/*
+!dev-lib/*
 *.log
 *.log.*
 *~
