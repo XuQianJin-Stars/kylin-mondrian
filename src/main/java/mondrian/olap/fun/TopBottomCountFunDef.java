@@ -96,8 +96,14 @@ class TopBottomCountFunDef extends FunDefBase {
                     return list;
                 }
 
+
                 if (orderCalc == null) {
                     // REVIEW: Why require "instanceof AbstractList"?
+
+
+                    if(call.getFunDef().getName().equals("BottomCount")){
+                        return list.subList(list.size()-n,list.size());
+                    }
                     if (list instanceof AbstractList && list.size() <= n) {
                         return list;
                     } else {
