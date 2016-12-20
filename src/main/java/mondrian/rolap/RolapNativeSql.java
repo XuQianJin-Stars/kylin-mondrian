@@ -162,6 +162,10 @@ public class RolapNativeSql {
                 return null;
             }
 
+            if(((RolapStoredMeasure) member).getAggregator().name.equals("count")){
+                return "count(1)";
+            }
+
             String exprInner;
             // Use aggregate table to create condition if available
             if (aggStar != null
