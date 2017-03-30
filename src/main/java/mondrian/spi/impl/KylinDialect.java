@@ -56,4 +56,26 @@ public class KylinDialect extends JdbcDialectImpl {
         return metaData.getColumnType(columnIndex + 1) == Types.BIGINT
                 ? SqlStatement.Type.LONG : super.getType(metaData, columnIndex);
     }
+
+    @Override
+    public String generateOrderItem(
+            String expr,
+            boolean nullable,
+            boolean ascending,
+            boolean collateNullsLast)
+    {
+        if (ascending) {
+            return expr + " ASC";
+        } else {
+            return expr + " DESC";
+        }
+    }
+
+    /*
+    * Kylin doesn't support UPPER()
+    */
+    @Override
+    public String toUpper(String expr) {
+        return expr;
+    }
 }
