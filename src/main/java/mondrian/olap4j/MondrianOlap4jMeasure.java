@@ -9,9 +9,11 @@
 */
 package mondrian.olap4j;
 
+import mondrian.olap.Exp;
 import mondrian.olap.Property;
 import mondrian.rolap.*;
 
+import org.olap4j.mdx.ParseTreeNode;
 import org.olap4j.metadata.Datatype;
 import org.olap4j.metadata.Measure;
 
@@ -70,6 +72,16 @@ class MondrianOlap4jMeasure
         }
         return Datatype.STRING;
     }
+
+    @Override
+    public ParseTreeNode getExpression() {
+        MondrianOlap4jParseTreeNode node = new MondrianOlap4jParseTreeNode();
+
+        if(member.getExpression() != null)
+            node.setExp(member.getExpression().toString());
+        return node;
+    }
+
 }
 
 // End MondrianOlap4jMeasure.java
