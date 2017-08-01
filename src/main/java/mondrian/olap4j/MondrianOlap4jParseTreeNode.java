@@ -11,6 +11,7 @@ import org.olap4j.type.Type;
  */
 public class MondrianOlap4jParseTreeNode implements ParseTreeNode {
     private String exp = "";
+    private String format = "";
 
     public <T> T accept(ParseTreeVisitor<T> parseTreeVisitor) {
         return null;
@@ -40,8 +41,17 @@ public class MondrianOlap4jParseTreeNode implements ParseTreeNode {
         this.exp = exp;
     }
 
+    public String getFormat() {
+        return format;
+    }
+
+    public void setFormat(String format) {
+        this.format = format;
+    }
+
     @Override
     public String toString() {
-        return exp;
+        return exp + "___" + format;
     }
+
 }

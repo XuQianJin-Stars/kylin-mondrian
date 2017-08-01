@@ -77,11 +77,13 @@ class MondrianOlap4jMeasure
     public ParseTreeNode getExpression() {
         MondrianOlap4jParseTreeNode node = new MondrianOlap4jParseTreeNode();
 
-        if(member.getExpression() != null)
+        if(member.getExpression() != null) {
             node.setExp(member.getExpression().toString());
+            String format = member.getPropertyValue("FORMAT_EXP").toString();
+            node.setFormat(format.substring(1, format.length() - 1));
+        }
         return node;
     }
-
 }
 
 // End MondrianOlap4jMeasure.java
