@@ -520,13 +520,67 @@ public class FunUtil extends Util {
             // values saves time.
             Map<Member, Object> mapMemberToValue;
             final boolean parentsToo = !brk;
+            boolean nullList = false;
+
             if (memberList == null) {
                 memberList = new ArrayList<Member>();
-                mapMemberToValue = evaluateMembers(
-                    evaluator, exp, memberIter, memberList, parentsToo);
+                nullList = true;
+            }
+
+            List<RolapMember> slicerMembers = ((RolapEvaluator) evaluator).getSlicerMembers();
+
+            //if(false) {
+            if (slicerMembers.size() > 0) {
+                int slicerIdx = 0;
+                mapMemberToValue = null;
+                RolapAggregator agg = null;
+
+                if (evaluator.getMembers()[0] instanceof RolapBaseCubeMeasure) {
+                    RolapBaseCubeMeasure measure = (RolapBaseCubeMeasure)(evaluator.getMembers()[0]);
+                    agg = measure.getAggregator();
+                }
+
+                for (Member member : evaluator.getMembers()) {
+                    if (slicerMembers.contains(member)) {
+                        break;
+                    }
+                    slicerIdx++;
+                }
+
+                for (RolapMember slicerMember : slicerMembers) {
+                    ((RolapEvaluator) evaluator).setCurrentMember(slicerIdx, slicerMember);
+                    Map<Member, Object> localMapMemberToValue = null;
+                    if (nullList) {
+                        localMapMemberToValue = evaluateMembers(
+                                evaluator, exp, memberIter, memberList, parentsToo);
+                        nullList = false;
+                    } else {
+                        localMapMemberToValue = evaluateMembers(
+                                evaluator, exp, memberIter, null, parentsToo);
+                    }
+
+                    if (mapMemberToValue == null) {
+                        mapMemberToValue = localMapMemberToValue;
+                    } else {
+                        for (Member keyMember : localMapMemberToValue.keySet()) {
+                            Object baseValue = mapMemberToValue.get(keyMember);
+                            Object addedValue = localMapMemberToValue.get(keyMember);
+
+                            if (baseValue != null && addedValue != null) {
+                                Object newValue = makeNewValue(baseValue, addedValue, agg);
+                                mapMemberToValue.put(keyMember, newValue);
+                            }
+                        }
+                    }
+                }
             } else {
-                mapMemberToValue = evaluateMembers(
-                    evaluator, exp, memberIter, null, parentsToo);
+                if (nullList) {
+                    mapMemberToValue = evaluateMembers(
+                            evaluator, exp, memberIter, memberList, parentsToo);
+                } else {
+                    mapMemberToValue = evaluateMembers(
+                            evaluator, exp, memberIter, null, parentsToo);
+                }
             }
 
             MemberComparator comp;
@@ -550,6 +604,74 @@ public class FunUtil extends Util {
             }
         }
     }
+
+
+    public static Object makeNewValue(Object base, Object added, RolapAggregator agg) {
+        if (base instanceof Integer) {
+            Integer baseInt;
+            baseInt = (Integer) base;
+            Integer addedInt = (Integer) added;
+
+            if (agg.getName().equals("sum") || agg.getName().equals("count") || agg.getName().equals("distinct-count")) {
+                return baseInt + addedInt;
+            } else if (agg.getName().equals("max")) {
+                return (baseInt > addedInt) ? baseInt : addedInt;
+            } else if (agg.getName().equals("min")) {
+                return (baseInt > addedInt) ? addedInt : baseInt;
+            }
+        } else if (base instanceof Short) {
+            Short baseShort;
+            baseShort = (Short) base;
+            Short addedShort = (Short) added;
+
+            if (agg.getName().equals("sum") || agg.getName().equals("count") || agg.getName().equals("distinct-count")) {
+                return baseShort + addedShort;
+            } else if (agg.getName().equals("max")) {
+                return (baseShort > addedShort) ? baseShort : addedShort;
+            } else if (agg.getName().equals("min")) {
+                return (baseShort > addedShort) ? addedShort : baseShort;
+            }
+        } else if (base instanceof Long) {
+            Long baseLong;
+            baseLong = (Long) base;
+            Long addedLong = (Long) added;
+
+            if (agg.getName().equals("sum") || agg.getName().equals("count") || agg.getName().equals("distinct-count")) {
+                return baseLong + addedLong;
+            } else if (agg.getName().equals("max")) {
+                return (baseLong > addedLong) ? baseLong : addedLong;
+            } else if (agg.getName().equals("min")) {
+                return (baseLong > addedLong) ? addedLong : baseLong;
+            }
+        } else if (base instanceof Float) {
+            Float baseFloat;
+            baseFloat = (Float) base;
+            Float addedFloat = (Float) added;
+
+            if (agg.getName().equals("sum") || agg.getName().equals("count") || agg.getName().equals("distinct-count")) {
+                return baseFloat + addedFloat;
+            } else if (agg.getName().equals("max")) {
+                return (baseFloat > addedFloat) ? baseFloat : addedFloat;
+            } else if (agg.getName().equals("min")) {
+                return (baseFloat > addedFloat) ? addedFloat : baseFloat;
+            }
+        } else if (base instanceof Double) {
+            Double baseDouble;
+            baseDouble = (Double) base;
+            Double addedDouble = (Double) added;
+
+            if (agg.getName().equals("sum") || agg.getName().equals("count") || agg.getName().equals("distinct-count")) {
+                return baseDouble + addedDouble;
+            } else if (agg.getName().equals("max")) {
+                return (baseDouble > addedDouble) ? baseDouble : addedDouble;
+            } else if (agg.getName().equals("min")) {
+                return (baseDouble > addedDouble) ? addedDouble : baseDouble;
+            }
+        }
+
+        return null;
+    }
+
 
     /**
      * Sorts a list of members according to a list of SortKeySpecs.
@@ -708,8 +830,47 @@ public class FunUtil extends Util {
         try {
             MemberComparator comp =
                 new BreakMemberComparator(evaluator, exp, desc);
-            Map<Member, Object> valueMap =
-                evaluateMembers(evaluator, exp, list, null, false);
+            List<RolapMember> slicerMembers = ((RolapEvaluator) evaluator).getSlicerMembers();
+            Map<Member, Object> valueMap = null;
+
+            if (slicerMembers.size() > 0) {
+                int slicerIdx = 0;
+                RolapAggregator agg = null;
+
+                for (Member member : evaluator.getMembers()) {
+                    if (slicerMembers.contains(member)) {
+                        break;
+                    }
+                    slicerIdx++;
+                }
+
+                if (evaluator.getMembers()[0] instanceof RolapBaseCubeMeasure) {
+                    RolapBaseCubeMeasure measure = (RolapBaseCubeMeasure)(evaluator.getMembers()[0]);
+                    agg = measure.getAggregator();
+                }
+
+                for (RolapMember slicerMember : slicerMembers) {
+                    ((RolapEvaluator) evaluator).setCurrentMember(slicerIdx, slicerMember);
+                    Map<Member, Object> localValueMap = evaluateMembers(evaluator, exp, list, null, false);
+
+                    if (valueMap == null) {
+                        valueMap = localValueMap;
+                    } else {
+                        for (Member keyMember : localValueMap.keySet()) {
+                            Object baseValue = valueMap.get(keyMember);
+                            Object addedValue = localValueMap.get(keyMember);
+
+                            if (baseValue != null && addedValue != null) {
+                                Object newValue = makeNewValue(baseValue, addedValue, agg);
+                                valueMap.put(keyMember, newValue);
+                            }
+                        }
+                    }
+                }
+            } else {
+                valueMap = evaluateMembers(evaluator, exp, list, null, false);
+            }
+
             evaluator.getTiming().markEnd(SORT_EVAL_TIMING_NAME);
             timingEval = false;
             evaluator.getTiming().markStart(SORT_TIMING_NAME);

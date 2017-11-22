@@ -70,7 +70,7 @@ public class RolapEvaluator implements Evaluator {
      */
     private static final Object nullResult = new Object();
 
-    private final RolapMember[] currentMembers;
+    private RolapMember[] currentMembers;
     private final RolapEvaluator parent;
     protected CellReader cellReader;
     private final int ancestorCommandCount;
@@ -326,11 +326,15 @@ public class RolapEvaluator implements Evaluator {
         return LOGGER;
     }
 
-    public final RolapMember[] getMembers() {
+    public RolapMember[] getMembers() {
         return currentMembers;
     }
 
-    public final RolapMember[] getNonAllMembers() {
+    public void setCurrentMember(int index, RolapMember member) {
+        currentMembers[index] = member;
+    }
+
+    public RolapMember[] getNonAllMembers() {
         if (nonAllMembers == null) {
             nonAllMembers = new RolapMember[root.nonAllPositionCount];
             for (int i = 0; i < root.nonAllPositionCount; i++) {
