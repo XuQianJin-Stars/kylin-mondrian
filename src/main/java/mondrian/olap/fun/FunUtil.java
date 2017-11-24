@@ -607,10 +607,8 @@ public class FunUtil extends Util {
 
 
     public static Object makeNewValue(Object base, Object added, RolapAggregator agg) {
-        Double zeroDouble = 1.2345E-8;
-
         if (base instanceof Integer) {
-            if (added.equals(zeroDouble)) {
+            if (added.equals(Util.nullValue)) {
                 return base;
             }
 
@@ -626,7 +624,7 @@ public class FunUtil extends Util {
                 return (baseInt > addedInt) ? addedInt : baseInt;
             }
         } else if (base instanceof Short) {
-            if (added.equals(zeroDouble)) {
+            if (added.equals(Util.nullValue)) {
                 return base;
             }
 
@@ -642,7 +640,7 @@ public class FunUtil extends Util {
                 return (baseShort > addedShort) ? addedShort : baseShort;
             }
         } else if (base instanceof Long) {
-            if (added.equals(zeroDouble)) {
+            if (added.equals(Util.nullValue)) {
                 return base;
             }
 
@@ -658,7 +656,7 @@ public class FunUtil extends Util {
                 return (baseLong > addedLong) ? addedLong : baseLong;
             }
         } else if (base instanceof Float) {
-            if (added.equals(zeroDouble)) {
+            if (added.equals(Util.nullValue)) {
                 return base;
             }
 
@@ -674,11 +672,11 @@ public class FunUtil extends Util {
                 return (baseFloat > addedFloat) ? addedFloat : baseFloat;
             }
         } else if (base instanceof Double) {
-            if (base.equals(zeroDouble)) {
+            if (base.equals(Util.nullValue)) {
                 return added;
             }
 
-            if (added.equals(zeroDouble)) {
+            if (added.equals(Util.nullValue)) {
                 return base;
             }
 
