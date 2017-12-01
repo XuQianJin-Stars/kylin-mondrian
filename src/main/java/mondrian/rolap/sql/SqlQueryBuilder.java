@@ -153,7 +153,7 @@ public class SqlQueryBuilder {
                 table = new Table(null, null, lastHop.relation, null);
             } else {
                 Table parentTable = table(butLast(path));
-                final RolapSchema.PhysLink link =
+                RolapSchema.PhysLink link =
                     Util.last(path.hopList).link;
                 table =
                     new Table(parentTable, link, lastHop.relation, null);
@@ -178,18 +178,38 @@ public class SqlQueryBuilder {
         // schemas/queries right now, though.
         TableKey key = new TableKey(relation, dimension);
         Table table = keyTableMap.get(key);
+
         if (table == null) {
             final Pair<Table, RolapSchema.PhysLink> parent =
-                parentTable(relation, dimension);
+                    parentTable(relation, dimension);
             if (parent == null) {
                 table = new Table(null, null, relation, dimension);
             } else {
-                table =
-                    new Table(parent.left, parent.right, relation, dimension);
+                // In case table same with its parent
+                TableKey existedKey = null;
+
+                if (parent.left.toString().equals(relation.toString())) {
+                    for (TableKey keyInMap : keyTableMap.keySet()) {
+                        Table tableInMap = keyTableMap.get(keyInMap);
+                        if (parent.left.toString().equals(tableInMap.toString())) {
+                            table = new Table(tableInMap.parent, tableInMap.link, relation, dimension);
+                            existedKey = keyInMap;
+                            break;
+                        }
+                    }
+                }
+
+                if (existedKey != null) {
+                    tableSet.remove(keyTableMap.get(existedKey));
+                    keyTableMap.remove(existedKey);
+                } else {
+                    table = new Table(parent.left, parent.right, relation, dimension);
+                }
             }
-            keyTableMap.put(key, table);
-            tableSet.add(table);
         }
+
+        keyTableMap.put(key, table);
+        tableSet.add(table);
         return table;
     }
 
@@ -200,19 +220,39 @@ public class SqlQueryBuilder {
             assert fact == null || physRelation == fact.getFactRelation();
             return null;
         }
-        final RolapSchema.PhysPath path;
+        RolapSchema.PhysPath path = null;
+        RolapCubeDimension parentDimension = null;
         RolapSchema.PhysRelation keyPhysRelation = dimension.getKeyTable();
         if (physRelation == keyPhysRelation) {
             if (fact == null) {
                 return null;
             } else {
-                path = fact.dimensionMap3.get(dimension);
-                if (path.getLinks().isEmpty()) {
+                final RolapSchema.PhysSchemaGraph graph = physRelation.getSchema().getGraph();
+                try {
+                    for (RolapCubeDimension dim : fact.dimensionMap3.keySet()) {
+                        if (dim == dimension) {
+                            continue;
+                        }
+
+                        path = graph.findPath(dim.getKeyTable(), Collections.singleton(physRelation), false);
+
+                        if (path.hopList.size() == 2 && path.hopList.get(0).forward && path.hopList.get(1).forward) {
+                            // Direct parent
+                            parentDimension = dim;
+                            break;
+                        }
+                    }
+                } catch (RolapSchema.PhysSchemaException e) {
+                    throw Util.newInternal(
+                            e, "Error while searching path from fact to current.");
+                }
+
+                if (path == null || path.getLinks().isEmpty()) {
                     assert physRelation == fact.getFactRelation();
                     return null; // degenerate dimension
                 }
-                final RolapSchema.PhysLink link = path.getLinks().get(0);
-                Table table = table(link.targetRelation, null);
+                final RolapSchema.PhysLink link = Util.last(path.getLinks());
+                Table table = table(link.targetRelation, parentDimension);
                 return Pair.of(table, link);
             }
         } else {
@@ -330,6 +370,7 @@ public class SqlQueryBuilder {
 
     /** Sends expressions to the underlying query. */
     public void flush() {
+        /*
         if (joinToDimensionKey) {
             for (Pair<Table, Joiner> pair
                 : new ArrayList<Pair<Table, Joiner>>(fromList))
@@ -342,6 +383,7 @@ public class SqlQueryBuilder {
                 }
             }
         }
+        */
         final Set<Table> added = new HashSet<Table>();
         for (Pair<Table, Joiner> pair : fromList) {
             addRecursive(pair.left, added);
@@ -487,7 +529,7 @@ public class SqlQueryBuilder {
 
     /** Table in this query. */
     public static class Table {
-        private final RolapSchema.PhysLink link;
+        private RolapSchema.PhysLink link;
         private final RolapSchema.PhysRelation physRelation;
         private final RolapCubeDimension dimension; // optional
         private final RolapSchema.PhysPath path;
