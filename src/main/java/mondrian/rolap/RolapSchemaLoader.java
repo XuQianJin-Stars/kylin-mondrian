@@ -1282,6 +1282,7 @@ public class RolapSchemaLoader {
             key.columnList.add(unresolvedColumn);
             unresolvedColumnList.add(unresolvedColumn);
         }
+        /*
         if (key.columnList.size() != 1) {
             handler.warning(
                 "Key must have precisely one column; key "
@@ -1291,6 +1292,7 @@ public class RolapSchemaLoader {
                 xmlKey,
                 null);
         }
+        */
     }
 
     static class Tcl {
