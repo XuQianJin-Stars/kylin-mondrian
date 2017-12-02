@@ -646,7 +646,8 @@ public class FunUtil extends Util {
 
             Long baseLong;
             baseLong = (Long) base;
-            Long addedLong = (Long) added;
+            Double addedDouble = Double.valueOf(added.toString());
+            Long addedLong = Math.round(addedDouble);
 
             if (agg.getName().equals("sum") || agg.getName().equals("count") || agg.getName().equals("distinct-count")) {
                 return baseLong + addedLong;
