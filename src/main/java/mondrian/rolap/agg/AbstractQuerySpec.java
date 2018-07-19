@@ -77,6 +77,8 @@ public abstract class AbstractQuerySpec implements QuerySpec {
         String exprInner;
         if (measure.getExpression() == null) {
             exprInner = "*";
+            // add from clause for count(*) measure
+            queryBuilder.addRelation(queryBuilder.table(measure.getTable()), SqlQueryBuilder.NullJoiner.INSTANCE);
         } else {
             exprInner = measure.getExpression().toSql();
             queryBuilder.addColumn(

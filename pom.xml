@@ -4,7 +4,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>pentaho</groupId>
   <artifactId>mondrian</artifactId>
-  <version>kylin-2.1</version>
+  <version>mdx-1.0</version>
   <name>mondrian</name>
   <description>Mondrian OLAP engine.</description>
   <url>http://github.com/pentaho/mondrian</url>
@@ -46,10 +46,15 @@
   </scm>
   <issueManagement />
   <distributionManagement>
+    <snapshotRepository>
+      <id>user-snapshots</id>
+      <name>User Project SNAPSHOTS</name>
+      <url>http://repository.kyligence.io:8081/repository/maven-snapshots/</url>
+    </snapshotRepository>
     <repository>
-      <id>pentaho</id>
-      <name>Pentaho repository</name>
-      <url>http://repository.pentaho.org/artifactory/repo</url>
+      <id>user-releases</id>
+      <name>User Project Release</name>
+      <url>http://repository.kyligence.io:8081/repository/maven-releases/</url>
     </repository>
   </distributionManagement>
   <properties>
@@ -144,7 +149,7 @@
     <dependency>
       <groupId>org.olap4j</groupId>
       <artifactId>olap4j-xmlaserver</artifactId>
-      <version>1.2.0</version>
+      <version>mdx-1.0</version>
     </dependency>
     <dependency>
       <groupId>xalan</groupId>

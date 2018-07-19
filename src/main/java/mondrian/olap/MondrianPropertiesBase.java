@@ -10,14 +10,19 @@
 */
 package mondrian.olap;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.net.URLConnection;
+import java.util.Enumeration;
+
 import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
-
 import org.eigenbase.util.property.TriggerableProperties;
-
-import java.io.*;
-import java.net.*;
-import java.util.Enumeration;
 
 /**
  * <code>MondrianProperties</code> contains the properties which determine the
@@ -55,8 +60,7 @@ public abstract class MondrianPropertiesBase extends TriggerableProperties {
     private final PropertySource propertySource;
     private int populateCount;
 
-    private static final Logger LOGGER =
-        Logger.getLogger(MondrianProperties.class);
+    private static final Logger LOGGER = Logger.getLogger(MondrianProperties.class);
 
     protected static final String mondrianDotProperties = "mondrian.properties";
 
@@ -117,20 +121,16 @@ public abstract class MondrianPropertiesBase extends TriggerableProperties {
                 this.lastModified = file.lastModified();
                 return new FileInputStream(file);
             } catch (FileNotFoundException e) {
-                throw Util.newInternal(
-                    e,
-                    "Error while opening properties file '" + file + "'");
+                throw Util.newInternal(e, "Error while opening properties file '" + file + "'");
             }
         }
 
         public boolean isStale() {
-            return file.exists()
-                   && file.lastModified() > this.lastModified;
+            return file.exists() && file.lastModified() > this.lastModified;
         }
 
         public String getDescription() {
-            return "file=" + file.getAbsolutePath()
-                   + " (exists=" + file.exists() + ")";
+            return "file=" + file.getAbsolutePath() + " (exists=" + file.exists() + ")";
         }
     }
 
@@ -150,9 +150,7 @@ public abstract class MondrianPropertiesBase extends TriggerableProperties {
             try {
                 return url.openConnection();
             } catch (IOException e) {
-                throw Util.newInternal(
-                    e,
-                    "Error while opening properties file '" + url + "'");
+                throw Util.newInternal(e, "Error while opening properties file '" + url + "'");
             }
         }
 
@@ -162,9 +160,7 @@ public abstract class MondrianPropertiesBase extends TriggerableProperties {
                 this.lastModified = connection.getLastModified();
                 return connection.getInputStream();
             } catch (IOException e) {
-                throw Util.newInternal(
-                    e,
-                    "Error while opening properties file '" + url + "'");
+                throw Util.newInternal(e, "Error while opening properties file '" + url + "'");
             }
         }
 
@@ -178,17 +174,16 @@ public abstract class MondrianPropertiesBase extends TriggerableProperties {
         }
     }
 
-
-    //use mondrian.properties under $KYANALYZER_HOME first
+    //use mondrian.properties under $MDX_HOME first
     static String getPropertiesPath() {
-        String kyConfHome = System.getProperty("KYANALYZER_HOME");
-        if (!StringUtils.isEmpty(kyConfHome)) {
-            return kyConfHome + File.separator + "conf" + File.separator +mondrianDotProperties;
+        String mdxHome = System.getProperty("MDX_HOME");
+        if (!StringUtils.isEmpty(mdxHome)) {
+            return mdxHome + File.separator + "conf" + File.separator + mondrianDotProperties;
         }
 
-        String kyHome = System.getenv("KYANALYZER_HOME");
-        if (!StringUtils.isEmpty(kyHome)){
-            String path = kyHome + File.separator + "conf" + File.separator +mondrianDotProperties;
+        String kyHome = System.getenv("MDX_HOME");
+        if (!StringUtils.isEmpty(kyHome)) {
+            String path = kyHome + File.separator + "conf" + File.separator + mondrianDotProperties;
             return path;
         }
         return mondrianDotProperties;
@@ -212,31 +207,23 @@ public abstract class MondrianPropertiesBase extends TriggerableProperties {
             try {
                 url = file.toURI().toURL();
             } catch (MalformedURLException e) {
-                LOGGER.warn(
-                    "Mondrian: file '"
-                    + file.getAbsolutePath()
-                    + "' could not be loaded", e);
+                LOGGER.warn("Mondrian: file '" + file.getAbsolutePath() + "' could not be loaded", e);
             }
         } else {
             // Then try load it from classloader
-            url =
-                MondrianPropertiesBase.class.getClassLoader().getResource(
-                    mondrianDotProperties);
+            url = MondrianPropertiesBase.class.getClassLoader().getResource(mondrianDotProperties);
         }
 
         if (url != null) {
             load(new UrlPropertySource(url));
         } else {
-            LOGGER.warn(
-                "mondrian.properties can't be found under '"
-                + new File(".").getAbsolutePath() + "' or classloader");
+            LOGGER.warn("mondrian.properties can't be found under '" + new File(".").getAbsolutePath()
+                    + "' or classloader");
         }
 
         // copy in all system properties which start with "mondrian."
         int count = 0;
-        for (Enumeration<?> keys = System.getProperties().keys();
-             keys.hasMoreElements();)
-        {
+        for (Enumeration<?> keys = System.getProperties().keys(); keys.hasMoreElements();) {
             String key = (String) keys.nextElement();
             String value = System.getProperty(key);
             if (key.startsWith("mondrian.")) {
@@ -250,8 +237,7 @@ public abstract class MondrianPropertiesBase extends TriggerableProperties {
             }
         }
         if (populateCount++ == 0) {
-            LOGGER.info(
-                "Mondrian: loaded " + count + " system properties");
+            LOGGER.info("Mondrian: loaded " + count + " system properties");
         }
     }
 
@@ -281,15 +267,11 @@ public abstract class MondrianPropertiesBase extends TriggerableProperties {
         try {
             load(source.openStream());
             if (populateCount == 0) {
-                LOGGER.info(
-                    "Mondrian: properties loaded from '"
-                    + source.getDescription()
-                    + "'");
+                LOGGER.info("Mondrian: properties loaded from '" + source.getDescription() + "'");
             }
         } catch (IOException e) {
             LOGGER.error(
-                "Mondrian: error while loading properties "
-                + "from '" + source.getDescription() + "' (" + e + ")");
+                    "Mondrian: error while loading properties " + "from '" + source.getDescription() + "' (" + e + ")");
         }
     }
 }
