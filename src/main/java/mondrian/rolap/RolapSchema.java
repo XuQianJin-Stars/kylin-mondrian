@@ -112,6 +112,8 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
     private final Dialect dialect;
 
+    private static int DEFAULT_CARDINALITY = 100;
+
     /**
      * Holds cubes in this schema.
      */
@@ -2561,7 +2563,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
                     //                        schema,
                     //                        table,
                     //                        execution);
-                    rowCount = 100;
+                    rowCount = DEFAULT_CARDINALITY;
                     if (rowCount >= 0) {
                         break;
                     }
@@ -2617,7 +2619,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
             ////                sqlQuery.addFrom(relation, null, true);
             ////                return getQueryCardinality(sqlQuery.toString());
             ////            }
-            return 1000;
+            return DEFAULT_CARDINALITY;
         }
 
         private int getColumnCardinality(String catalog, String schema, String table, String column) {

@@ -51,6 +51,8 @@ public class RolapStar {
 
     private final Table factTable;
 
+    private static final int DEFAULT_CARDINALITY = 100;
+
     /**
      * Keeps track of the columns across all tables. Should have
      * a number of elements equal to columnCount.
@@ -714,7 +716,7 @@ public class RolapStar {
          * @return the column cardinality.
          */
         public int getCardinality() {
-            return 1000;
+            return DEFAULT_CARDINALITY;
 //            if (approxCardinality < 0) {
 //                approxCardinality =
 //                    table.relation.getSchema().statistic.getColumnCardinality(
