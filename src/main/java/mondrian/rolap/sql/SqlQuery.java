@@ -12,12 +12,23 @@
 */
 package mondrian.rolap.sql;
 
-import mondrian.olap.*;
-import mondrian.rolap.*;
-import mondrian.spi.Dialect;
-import mondrian.util.Pair;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
 
-import java.util.*;
+import mondrian.olap.MondrianDef;
+import mondrian.olap.MondrianProperties;
+import mondrian.olap.Util;
+import mondrian.rolap.RolapSchema;
+import mondrian.rolap.RolapSchemaProvider;
+import mondrian.rolap.RolapUtil;
+import mondrian.rolap.SqlStatement;
+import mondrian.spi.Dialect;
+import mondrian.util.DirectedGraph;
+import mondrian.util.Pair;
 
 /**
  * <code>SqlQuery</code> allows us to build a <code>select</code>
@@ -74,7 +85,7 @@ public class SqlQuery {
     private boolean distinct;
 
     private final ClauseList select;
-    private final FromClauseList from;
+    private FromClauseList from;
     private final ClauseList where;
     private final ClauseList groupBy;
     private final ClauseList having;
@@ -82,8 +93,7 @@ public class SqlQuery {
     private final List<ClauseList> groupingSets;
     private final ClauseList groupingFunctions;
 
-    private final List<SqlStatement.Type> types =
-        new ArrayList<SqlStatement.Type>();
+    private final List<SqlStatement.Type> types = new ArrayList<SqlStatement.Type>();
 
     /** Controls whether table optimization hints are used */
     private boolean allowHints;
@@ -105,8 +115,7 @@ public class SqlQuery {
     /** Scratch buffer. Clear it before use. */
     private final StringBuilder buf;
 
-    private final Map<String, String> columnAliases =
-        new HashMap<String, String>();
+    private final Map<String, String> columnAliases = new HashMap<String, String>();
 
     private final List<String> columnAliases2 = new ArrayList<String>();
 
@@ -152,9 +161,7 @@ public class SqlQuery {
      * @param dialect Dialect
      */
     public SqlQuery(Dialect dialect) {
-        this(
-            dialect,
-            MondrianProperties.instance().GenerateFormattedSql.get());
+        this(dialect, MondrianProperties.instance().GenerateFormattedSql.get());
     }
 
     public void setDistinct(final boolean distinct) {
@@ -184,20 +191,14 @@ public class SqlQuery {
      *
      * @pre alias != null
      */
-    private boolean addFromQuery(
-        final String query,
-        final String alias,
-        String parentAlias,
-        String joinCondition,
-        final boolean failIfExists)
-    {
+    private boolean addFromQuery(final String query, final String alias, String parentAlias, String joinCondition,
+            final boolean failIfExists) {
         assert alias != null;
         assert alias.length() > 0;
 
         if (fromAliases.contains(alias)) {
             if (failIfExists) {
-                throw Util.newInternal(
-                    "query already contains alias '" + alias + "'");
+                throw Util.newInternal("query already contains alias '" + alias + "'");
             } else {
                 return false;
             }
@@ -249,20 +250,12 @@ public class SqlQuery {
      * @pre alias != null
      * @return true if table was added
      */
-    boolean addFromTable(
-        final String schema,
-        final String name,
-        final String alias,
-        final String filter,
-        final Map<String, String> hintMap,
-        final String parentAlias,
-        final String joinCondition,
-        final boolean failIfExists)
-    {
+    boolean addFromTable(final String schema, final String name, final String alias, final String filter,
+            final Map<String, String> hintMap, final String parentAlias, final String joinCondition,
+            final boolean failIfExists) {
         if (fromAliases.contains(alias)) {
             if (failIfExists) {
-                throw Util.newInternal(
-                    "query already contains alias '" + alias + "'");
+                throw Util.newInternal("query already contains alias '" + alias + "'");
             } else {
                 return false;
             }
@@ -309,11 +302,7 @@ public class SqlQuery {
         return true;
     }
 
-    public void addFrom(
-        final SqlQuery sqlQuery,
-        final String alias,
-        final boolean failIfExists)
-    {
+    public void addFrom(final SqlQuery sqlQuery, final String alias, final boolean failIfExists) {
         addFromQuery(sqlQuery.toString(), alias, null, null, failIfExists);
     }
 
@@ -328,74 +317,36 @@ public class SqlQuery {
      * @param failIfExists Whether to fail if relation is already present
      * @return Whether relation was added to query
      */
-    public boolean addFrom(
-        final RolapSchema.PhysRelation relation,
-        final String alias,
-        final boolean failIfExists)
-    {
+    public boolean addFrom(final RolapSchema.PhysRelation relation, final String alias, final boolean failIfExists) {
         return addFrom_(relation, alias, null, null, failIfExists);
     }
 
-    public boolean addFrom(
-        RolapSchema.PhysRelation relation,
-        String alias,
-        String parentAlias,
-        String joinCondition,
-        final boolean failIfExists)
-    {
-        return addFrom_(
-            relation, alias, parentAlias, joinCondition, failIfExists);
+    public boolean addFrom(RolapSchema.PhysRelation relation, String alias, String parentAlias, String joinCondition,
+            final boolean failIfExists) {
+        return addFrom_(relation, alias, parentAlias, joinCondition, failIfExists);
     }
 
-    private boolean addFrom_(
-        RolapSchema.PhysRelation relation,
-        String alias,
-        String parentAlias,
-        String joinCondition,
-        final boolean failIfExists)
-    {
+    private boolean addFrom_(RolapSchema.PhysRelation relation, String alias, String parentAlias, String joinCondition,
+            final boolean failIfExists) {
         Util.deprecated("alias param probably not necessary", false);
-        Util.deprecated(
-            "adopt visitor pattern and replace 'instanceof' below", false);
+        Util.deprecated("adopt visitor pattern and replace 'instanceof' below", false);
         if (relation instanceof RolapSchema.PhysView) {
             final RolapSchema.PhysView view = (RolapSchema.PhysView) relation;
-            final String viewAlias =
-                (alias == null)
-                ? view.getAlias()
-                : alias;
+            final String viewAlias = (alias == null) ? view.getAlias() : alias;
             final String sqlString = view.getSqlString();
-            return addFromQuery(
-                sqlString, viewAlias, parentAlias, joinCondition, false);
+            return addFromQuery(sqlString, viewAlias, parentAlias, joinCondition, false);
 
         } else if (relation instanceof RolapSchema.PhysTable) {
-            final RolapSchema.PhysTable table =
-                (RolapSchema.PhysTable) relation;
-            final String tableAlias =
-                (alias == null)
-                ? table.getAlias()
-                : alias;
-            return addFromTable(
-                table.getSchemaName(),
-                table.getName(),
-                tableAlias,
-                /*table.getFilter()*/null,
-                table.getHintMap(),
-                parentAlias,
-                joinCondition,
-                failIfExists);
+            final RolapSchema.PhysTable table = (RolapSchema.PhysTable) relation;
+            final String tableAlias = (alias == null) ? table.getAlias() : alias;
+            return addFromTable(table.getSchemaName(), table.getName(), tableAlias, /*table.getFilter()*/null,
+                    table.getHintMap(), parentAlias, joinCondition, failIfExists);
         } else if (relation instanceof RolapSchema.PhysInlineTable) {
-            final RolapSchema.PhysInlineTable table =
-                (RolapSchema.PhysInlineTable) relation;
-            RolapSchema.PhysView physView =
-                RolapUtil.convertInlineTableToRelation(table, dialect);
-            return addFromQuery(
-                physView.getSqlString(),
-                table.getAlias(),
-                parentAlias,
-                joinCondition,
-                failIfExists);
-/*
-        } else if (relation instanceof MondrianDef.Join) {
+            final RolapSchema.PhysInlineTable table = (RolapSchema.PhysInlineTable) relation;
+            RolapSchema.PhysView physView = RolapUtil.convertInlineTableToRelation(table, dialect);
+            return addFromQuery(physView.getSqlString(), table.getAlias(), parentAlias, joinCondition, failIfExists);
+            /*
+                    } else if (relation instanceof MondrianDef.Join) {
             final MondrianDef.Join join = (MondrianDef.Join) relation;
             return addJoin(
                 join.left,
@@ -405,7 +356,7 @@ public class SqlQuery {
                 join.getRightAlias(),
                 join.rightKey,
                 failIfExists);
-*/
+            */
         } else {
             Util.deprecated("remove above commented section", false);
             throw Util.newInternal("bad relation type " + relation);
@@ -427,17 +378,13 @@ public class SqlQuery {
      * @param expression Expression
      * @return Alias of expression
      */
-    public String addSelectGroupBy(
-        final String expression,
-        SqlStatement.Type type)
-    {
+    public String addSelectGroupBy(final String expression, SqlStatement.Type type) {
         final String alias = addSelect(expression, type);
         addGroupBy(expression, alias);
         return alias;
     }
 
-    public int getCurrentSelectListSize()
-    {
+    public int getCurrentSelectListSize() {
         return select.size();
     }
 
@@ -454,11 +401,7 @@ public class SqlQuery {
      * @param alias Column alias (or null for no alias)
      * @return Column alias
      */
-    public String addSelect(
-        final String expression,
-        final SqlStatement.Type type,
-        String alias)
-    {
+    public String addSelect(final String expression, final SqlStatement.Type type, String alias) {
         if (alias == null) {
             alias = nextColumnAlias();
         }
@@ -522,12 +465,7 @@ public class SqlQuery {
      * @param prepend whether to prepend to the current list of items
      * @param nullable whether the expression might be null
      */
-    public void addOrderBy(
-        String expr,
-        boolean ascending,
-        boolean prepend,
-        boolean nullable)
-    {
+    public void addOrderBy(String expr, boolean ascending, boolean prepend, boolean nullable) {
         this.addOrderBy(expr, expr, ascending, prepend, nullable, true);
     }
 
@@ -540,21 +478,9 @@ public class SqlQuery {
      * @param nullable whether the expression might be null
      * @param collateNullsLast whether null values should appear first or last.
      */
-    public void addOrderBy(
-        String expr,
-        String alias,
-        boolean ascending,
-        boolean prepend,
-        boolean nullable,
-        boolean collateNullsLast)
-    {
-        String orderExpr =
-            dialect.generateOrderItem(
-                dialect.requiresOrderByAlias()
-                    ? alias
-                    : expr,
-                nullable,
-                ascending,
+    public void addOrderBy(String expr, String alias, boolean ascending, boolean prepend, boolean nullable,
+            boolean collateNullsLast) {
+        String orderExpr = dialect.generateOrderItem(dialect.requiresOrderByAlias() ? alias : expr, nullable, ascending,
                 collateNullsLast);
         if (prepend) {
             orderBy.add(0, orderExpr);
@@ -580,34 +506,77 @@ public class SqlQuery {
         final String first = distinct ? "select distinct " : "select ";
         select.toBuffer(buf, generateFormattedSql, prefix, first, ", ", "", "");
         groupingFunctionsToBuffer(buf, prefix);
-        String fromSep = joinCount > 0 ? " join " : ", ";
+        String fromSep =  " inner join ";
         if (dialect.allowsJoinOn() && from.size() > 1) {
-            if (joinCount <= 0) {
-                throw new AssertionError();
+//            if (joinCount <= 0) {
+//                throw new AssertionError();
+//            }
+        }
+        // use default join clause
+        FromClauseList fromClauseList = new FromClauseList(true);
+        RolapSchema schema = RolapSchemaProvider.getCurrentSchema();
+        buildJoinClause(schema, fromClauseList);
+
+        fromClauseList.toBuffer(buf, generateFormattedSql, prefix, " from ", fromSep, "", "");
+        where.toBuffer(buf, generateFormattedSql, prefix, " where ", " and ", "", "");
+        if (groupingSets.isEmpty()) {
+            groupBy.toBuffer(buf, generateFormattedSql, prefix, " group by ", ", ", "", "");
+        } else {
+            ClauseList.listToBuffer(buf, groupingSets, generateFormattedSql, prefix, " group by grouping sets (", ", ",
+                    ")");
+        }
+        having.toBuffer(buf, generateFormattedSql, prefix, " having ", " and ", "", "");
+        orderBy.toBuffer(buf, generateFormattedSql, prefix, " order by ", ", ", "", "");
+        return buf;
+    }
+
+    private void buildJoinClause(RolapSchema schema, FromClauseList fromClauseList) {
+        RolapSchema.PhysSchema physSchema = schema.getPhysicalSchema();
+        LinkedHashMap<String, RolapSchema.PhysTable> tables = (LinkedHashMap) physSchema.getTablesByName();
+        boolean needJoinClouse = tables.size() <= 2 ? false : true;
+        List<RolapSchema.PhysTable> tablesRelations = new ArrayList<RolapSchema.PhysTable>(tables.values());
+        RolapSchema.PhysTable factTable = tablesRelations.get(1);
+        // add fact table
+        fromClauseList.add(generateJoinClauseStr(factTable, null));
+        if (needJoinClouse) {
+            // add join tables
+            DirectedGraph<RolapSchema.PhysRelation, RolapSchema.PhysLink> graph =  physSchema.getGraph().getGraph();
+            Map<RolapSchema.PhysRelation, List<RolapSchema.PhysLink>> linkMap = graph.getLinksFrom();
+            LinkedList<List<RolapSchema.PhysLink>> sortedLinks = new LinkedList<List<RolapSchema.PhysLink>>();
+
+            // near fact table first
+            for (Map.Entry<RolapSchema.PhysRelation, List<RolapSchema.PhysLink>> entry : linkMap.entrySet()) {
+                RolapSchema.PhysTable table = (RolapSchema.PhysTable) entry.getKey();
+                List<RolapSchema.PhysLink> links = entry.getValue();
+                if (table.getSchemaName().equals(factTable.getSchemaName()) && table.getName().equals(factTable.getName())) {
+                    sortedLinks.addFirst(links);
+                } else {
+                    sortedLinks.addLast(links);
+                }
+            }
+            for (List<RolapSchema.PhysLink> links : sortedLinks) {
+                for (RolapSchema.PhysLink link : links) {
+                    fromClauseList.add(generateJoinClauseStr((RolapSchema.PhysTable) link.getTo(), link));
+                }
             }
         }
-        from.toBuffer(
-            buf, generateFormattedSql, prefix, " from ", fromSep, "", "");
-        where.toBuffer(
-            buf, generateFormattedSql, prefix, " where ", " and ", "", "");
-        if (groupingSets.isEmpty()) {
-            groupBy.toBuffer(
-                buf, generateFormattedSql, prefix, " group by ", ", ", "", "");
-        } else {
-            ClauseList.listToBuffer(
-                buf,
-                groupingSets,
-                generateFormattedSql,
-                prefix,
-                " group by grouping sets (",
-                ", ",
-                ")");
+
+    }
+
+    private String generateJoinClauseStr(RolapSchema.PhysTable table, RolapSchema.PhysLink link) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("\"");
+        sb.append(table.getSchemaName());
+        sb.append("\".\"");
+        sb.append(table.getName());
+        sb.append("\" as \"");
+        sb.append(table.getAlias());
+        sb.append("\"");
+        if (link != null) {
+            sb.append(" on ");
+            sb.append(link.sql);
         }
-        having.toBuffer(
-            buf, generateFormattedSql, prefix, " having ", " and ", "", "");
-        orderBy.toBuffer(
-            buf, generateFormattedSql, prefix, " order by ", ", ", "", "");
-        return buf;
+        return sb.toString();
     }
 
     private void groupingFunctionsToBuffer(StringBuilder buf, String prefix) {
@@ -617,16 +586,11 @@ public class SqlQuery {
         int n = 0;
         for (String groupingFunction : groupingFunctions) {
             if (generateFormattedSql) {
-                buf.append(",")
-                    .append(Util.nl)
-                    .append(INDENT)
-                    .append(prefix);
+                buf.append(",").append(Util.nl).append(INDENT).append(prefix);
             } else {
                 buf.append(", ");
             }
-            buf.append("grouping(")
-                .append(groupingFunction)
-                .append(") as ");
+            buf.append("grouping(").append(groupingFunction).append(") as ");
             dialect.quoteIdentifier("g" + n++, buf);
         }
     }
@@ -660,10 +624,8 @@ public class SqlQuery {
     }
 
     public Pair<String, List<SqlStatement.Type>> toSqlAndTypes() {
-        assert types.size() == select.size() + groupingFunctions.size()
-            : types.size() + " types, "
-              + (select.size() + groupingFunctions.size())
-              + " select items in query " + this;
+        assert types.size() == select.size() + groupingFunctions.size() : types.size() + " types, "
+                + (select.size() + groupingFunctions.size()) + " select items in query " + this;
         return Pair.of(toString(), types);
     }
 
@@ -689,20 +651,13 @@ public class SqlQuery {
     }
 
     static class FromClauseList extends ClauseList {
-        private final List<JoinOnClause> joinOnClauses =
-            new ArrayList<JoinOnClause>();
+        private final List<JoinOnClause> joinOnClauses = new ArrayList<JoinOnClause>();
 
         FromClauseList(boolean allowsDups) {
             super(allowsDups);
         }
 
-        public void addOn(
-            String leftAlias,
-            String leftKey,
-            String rightAlias,
-            String rightKey,
-            String condition)
-        {
+        public void addOn(String leftAlias, String leftKey, String rightAlias, String rightKey, String condition) {
             if (leftAlias == null && rightAlias == null) {
                 // do nothing
             } else if (leftAlias == null) {
@@ -713,8 +668,7 @@ public class SqlQuery {
                 // store the same name for right tables
                 rightAlias = leftAlias;
             }
-            joinOnClauses.add(
-                new JoinOnClause(condition, leftAlias, rightAlias));
+            joinOnClauses.add(new JoinOnClause(condition, leftAlias, rightAlias));
         }
 
         public void toBuffer(StringBuilder buf, List<String> fromAliases) {
@@ -734,25 +688,17 @@ public class SqlQuery {
             }
         }
 
-        void appendJoin(
-            final List<String> addedTables,
-            final String from,
-            final String alias,
-            final StringBuilder buf)
-        {
+        void appendJoin(final List<String> addedTables, final String from, final String alias,
+                final StringBuilder buf) {
             int n = 0;
             // first check when the current table is on the left side
             for (JoinOnClause joinOnClause : joinOnClauses) {
                 // the first table was added before join, it has to be handled
                 // specially: Table.column = expression
-                if ((addedTables.size() == 1
-                     && addedTables.get(0).equals(joinOnClause.left)
-                     && joinOnClause.left.equals(joinOnClause.right))
-                    || (alias.equals(joinOnClause.left)
-                        && addedTables.contains(joinOnClause.right))
-                    || (alias.equals(joinOnClause.right)
-                        && addedTables.contains(joinOnClause.left)))
-                {
+                if ((addedTables.size() == 1 && addedTables.get(0).equals(joinOnClause.left)
+                        && joinOnClause.left.equals(joinOnClause.right))
+                        || (alias.equals(joinOnClause.left) && addedTables.contains(joinOnClause.right))
+                        || (alias.equals(joinOnClause.right) && addedTables.contains(joinOnClause.left))) {
                     if (n++ == 0) {
                         buf.append(" join ").append(from).append(" on ");
                     } else {
@@ -766,8 +712,7 @@ public class SqlQuery {
                 // JOIN ... ON clauses at all, if this is a database that
                 // doesn't support ANSI-join syntax). Append an old-style FROM
                 // item separated by a comma.
-                buf.append(joinOnClauses.isEmpty() ? ", " : " cross join ")
-                    .append(from);
+                buf.append(joinOnClauses.isEmpty() ? ", " : " cross join ").append(from);
             }
         }
     }
@@ -798,29 +743,19 @@ public class SqlQuery {
             return false;
         }
 
-        final void toBuffer(
-            StringBuilder buf,
-            boolean generateFormattedSql,
-            String prefix,
-            String first,
-            String sep,
-            String last,
-            String empty)
-        {
+        final void toBuffer(StringBuilder buf, boolean generateFormattedSql, String prefix, String first, String sep,
+                String last, String empty) {
             if (isEmpty()) {
                 buf.append(empty);
                 return;
             }
+
             first = foo(generateFormattedSql, prefix, first);
             sep = foo(generateFormattedSql, prefix, sep);
             toBuffer(buf, first, sep, last);
         }
 
-        static String foo(
-            boolean generateFormattedSql,
-            String prefix,
-            String s)
-        {
+        static String foo(boolean generateFormattedSql, String prefix, String s) {
             if (generateFormattedSql) {
                 if (s.startsWith(" ")) {
                     // E.g. " and "
@@ -828,9 +763,7 @@ public class SqlQuery {
                 }
                 if (s.endsWith(" ")) {
                     // E.g. ", "
-                    s =
-                        s.substring(0, s.length() - 1) + Util.nl + prefix
-                        +  INDENT;
+                    s = s.substring(0, s.length() - 1) + Util.nl + prefix + INDENT;
                 } else if (s.endsWith("(")) {
                     // E.g. "("
                     s = s + Util.nl + prefix + INDENT;
@@ -839,12 +772,7 @@ public class SqlQuery {
             return s;
         }
 
-        final void toBuffer(
-            final StringBuilder buf,
-            final String first,
-            final String sep,
-            final String last)
-        {
+        final void toBuffer(final StringBuilder buf, final String first, final String sep, final String last) {
             int n = 0;
             buf.append(first);
             for (String s : this) {
@@ -856,15 +784,8 @@ public class SqlQuery {
             buf.append(last);
         }
 
-        static void listToBuffer(
-            StringBuilder buf,
-            List<ClauseList> clauseListList,
-            boolean generateFormattedSql,
-            String prefix,
-            String first,
-            String sep,
-            String last)
-        {
+        static void listToBuffer(StringBuilder buf, List<ClauseList> clauseListList, boolean generateFormattedSql,
+                String prefix, String first, String sep, String last) {
             first = foo(generateFormattedSql, prefix, first);
             sep = foo(generateFormattedSql, prefix, sep);
             buf.append(first);
@@ -873,8 +794,7 @@ public class SqlQuery {
                 if (n++ > 0) {
                     buf.append(sep);
                 }
-                clauseList.toBuffer(
-                    buf, false, prefix, "(", ", ", ")", "()");
+                clauseList.toBuffer(buf, false, prefix, "(", ", ", ")", "()");
             }
             buf.append(last);
         }
@@ -884,8 +804,7 @@ public class SqlQuery {
      * Collection of alternative code for alternative dialects.
      */
     public static class CodeSet {
-        private final Map<String, String> dialectCodes =
-            new HashMap<String, String>();
+        private final Map<String, String> dialectCodes = new HashMap<String, String>();
 
         public String put(String dialect, String code) {
             return dialectCodes.put(dialect, code);
@@ -915,13 +834,8 @@ public class SqlQuery {
         final String rightKey;
         final String rightAlias;
 
-        public RelInfo(
-            MondrianDef.Relation relation,
-            String leftKey,
-            String leftAlias,
-            String rightKey,
-            String rightAlias)
-        {
+        public RelInfo(MondrianDef.Relation relation, String leftKey, String leftAlias, String rightKey,
+                String rightAlias) {
             this.relation = relation;
             this.leftKey = leftKey;
             this.leftAlias = leftAlias;

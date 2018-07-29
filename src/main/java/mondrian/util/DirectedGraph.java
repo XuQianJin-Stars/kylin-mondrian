@@ -190,6 +190,10 @@ public class DirectedGraph<N, E extends DirectedGraph.Edge<N>> {
         return edges;
     }
 
+    public Map<N, List<E>> getLinksFrom() {
+        return linksFrom;
+    }
+
     /**
      * Link between two nodes.
      */

@@ -578,6 +578,10 @@ public class RolapMemberBase
     }
 
     public Object getPropertyValue(Property property) {
+        // set rolapschema
+        RolapSchema rolapSchema = this.level.cube.getSchema();
+        RolapSchemaProvider.setCurrentSchema(rolapSchema);
+
         if (property != null) {
             Member parentMember;
             List<RolapMember> list;

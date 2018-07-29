@@ -566,6 +566,9 @@ public class SegmentLoader {
         List<StarPredicate> compoundPredicateList)
     {
         RolapStar star = groupingSetsList.getStar();
+        // set current schema
+        RolapSchemaProvider.setCurrentSchema(star.getSchema());
+
         Pair<String, List<SqlStatement.Type>> pair =
             AggregationManager.generateSql(
                 groupingSetsList, compoundPredicateList);

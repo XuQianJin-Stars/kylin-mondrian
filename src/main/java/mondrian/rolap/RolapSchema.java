@@ -10,35 +10,86 @@
 */
 package mondrian.rolap;
 
-import mondrian.olap.*;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+import java.sql.PreparedStatement;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.util.AbstractList;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+
+import javax.sql.DataSource;
+
+import org.apache.log4j.Logger;
+import org.eigenbase.xom.ElementDef;
+import org.eigenbase.xom.Location;
+import org.eigenbase.xom.NodeDef;
+import org.olap4j.impl.NamedListImpl;
+import org.olap4j.impl.UnmodifiableArrayList;
+import org.olap4j.mdx.IdentifierSegment;
+import org.olap4j.metadata.NamedList;
+
+import mondrian.olap.CacheControl;
+import mondrian.olap.Cube;
+import mondrian.olap.Dimension;
+import mondrian.olap.FunTable;
+import mondrian.olap.Hierarchy;
+import mondrian.olap.Id;
+import mondrian.olap.Larder;
+import mondrian.olap.Larders;
+import mondrian.olap.LocalizedProperty;
+import mondrian.olap.MatchType;
 import mondrian.olap.Member;
+import mondrian.olap.MondrianDef;
+import mondrian.olap.MondrianProperties;
+import mondrian.olap.MondrianServer;
+import mondrian.olap.NamedSet;
+import mondrian.olap.OlapElement;
+import mondrian.olap.OlapElementBase;
 import mondrian.olap.Parameter;
-import mondrian.olap.fun.*;
+import mondrian.olap.Role;
+import mondrian.olap.RoleImpl;
+import mondrian.olap.Schema;
+import mondrian.olap.SchemaReader;
+import mondrian.olap.Syntax;
+import mondrian.olap.Util;
+import mondrian.olap.fun.FunTableImpl;
+import mondrian.olap.fun.GlobalFunTable;
+import mondrian.olap.fun.Resolver;
+import mondrian.olap.fun.UdfResolver;
 import mondrian.olap.type.Type;
 import mondrian.resource.MondrianResource;
 import mondrian.rolap.aggmatcher.AggTableManager;
 import mondrian.rolap.aggmatcher.JdbcSchema;
-import mondrian.rolap.sql.*;
-import mondrian.server.*;
+import mondrian.rolap.sql.SqlQuery;
+import mondrian.rolap.sql.SqlQueryBuilder;
+import mondrian.server.Execution;
 import mondrian.server.Statement;
-import mondrian.spi.*;
-import mondrian.spi.impl.*;
-import mondrian.util.*;
-
-import org.apache.log4j.Logger;
-
-import org.eigenbase.xom.*;
-
-import org.olap4j.impl.*;
-import org.olap4j.mdx.IdentifierSegment;
-import org.olap4j.metadata.NamedList;
-
-import java.lang.reflect.*;
-import java.sql.*;
-import java.util.*;
-import java.util.Date;
-
-import javax.sql.DataSource;
+import mondrian.spi.DataServicesLocator;
+import mondrian.spi.DataServicesProvider;
+import mondrian.spi.Dialect;
+import mondrian.spi.DialectManager;
+import mondrian.spi.RoleGenerator;
+import mondrian.spi.StatisticsProvider;
+import mondrian.spi.UserDefinedFunction;
+import mondrian.spi.impl.Scripts;
+import mondrian.util.ByteString;
+import mondrian.util.ClassResolver;
+import mondrian.util.DirectedGraph;
+import mondrian.util.Pair;
 
 /**
  * A <code>RolapSchema</code> is a collection of {@link RolapCube}s and
@@ -64,8 +115,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
     /**
      * Holds cubes in this schema.
      */
-    private final Map<String, RolapCube> mapNameToCube =
-        new HashMap<String, RolapCube>();
+    private final Map<String, RolapCube> mapNameToCube = new HashMap<String, RolapCube>();
 
     /**
      * Maps {@link String names of shared dimensions} to the canonical instance
@@ -73,8 +123,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
      * belongs to a dummy cube whose name is the name of the dimension prefixed
      * with "$", for example "$Store".
      */
-    final Map<String, RolapCubeDimension> sharedDimensions =
-        new HashMap<String, RolapCubeDimension>();
+    final Map<String, RolapCubeDimension> sharedDimensions = new HashMap<String, RolapCubeDimension>();
 
     /**
      * The default role for connections to this schema.
@@ -103,14 +152,12 @@ public class RolapSchema extends OlapElementBase implements Schema {
      * Maps {@link String names of roles} to
      * {@link RoleFactory role factories with those names}.
      */
-    final Map<String, RoleFactory> mapNameToRole =
-        new HashMap<String, RoleFactory>();
+    final Map<String, RoleFactory> mapNameToRole = new HashMap<String, RoleFactory>();
 
     /**
      * Maps {@link String names of sets} to {@link NamedSet named sets}.
      */
-    private final Map<String, NamedSet> mapNameToSet =
-        new HashMap<String, NamedSet>();
+    private final Map<String, NamedSet> mapNameToSet = new HashMap<String, NamedSet>();
 
     /**
      * Table containing all standard MDX functions, plus user-defined functions
@@ -118,8 +165,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
      */
     private FunTable funTable;
 
-    final List<RolapSchemaParameter > parameterList =
-        new ArrayList<RolapSchemaParameter >();
+    final List<RolapSchemaParameter> parameterList = new ArrayList<RolapSchemaParameter>();
 
     /** The date at which the schema was loaded. Set at the end of
      * initialization; therefore this is null if and only if the schema is
@@ -165,17 +211,9 @@ public class RolapSchema extends OlapElementBase implements Schema {
      * @param locales Locales
      * @param larder Annotation map
      */
-    RolapSchema(
-        final SchemaKey key,
-        final Util.PropertyList connectInfo,
-        final DataSource dataSource,
-        final ByteString md5Bytes,
-        boolean useContentChecksum,
-        String name,
-        boolean quoteSql,
-        Set<Locale> locales,
-        Larder larder)
-    {
+    RolapSchema(final SchemaKey key, final Util.PropertyList connectInfo, final DataSource dataSource,
+            final ByteString md5Bytes, boolean useContentChecksum, String name, boolean quoteSql, Set<Locale> locales,
+            Larder larder) {
         this.id = Util.generateUuidString();
         this.key = key;
         this.locales = locales;
@@ -188,12 +226,10 @@ public class RolapSchema extends OlapElementBase implements Schema {
         this.rootRole = Util.createRootRole(this);
         this.defaultRole = new ConstantRoleFactory(rootRole);
         final MondrianServer internalServer = MondrianServer.forId(null);
-        this.internalConnection =
-            new RolapConnection(internalServer, connectInfo, this, dataSource);
+        this.internalConnection = new RolapConnection(internalServer, connectInfo, this, dataSource);
         assert internalConnection.dialect != null;
         internalServer.removeConnection(internalConnection);
-        internalServer.removeStatement(
-            internalConnection.getInternalStatement());
+        internalServer.removeStatement(internalConnection.getInternalStatement());
         this.dialect = internalConnection.dialect.withQuoting(quoteSql);
 
         this.aggTableManager = new AggTableManager(this);
@@ -204,16 +240,12 @@ public class RolapSchema extends OlapElementBase implements Schema {
         this.larder = larder;
 
         if (getInternalConnection() != null
-            && "true".equals(
-                getInternalConnection().getProperty(
-                    RolapConnectionProperties.Ignore.name())))
-        {
+                && "true".equals(getInternalConnection().getProperty(RolapConnectionProperties.Ignore.name()))) {
             warningList = new ArrayList<MondrianSchemaException>();
         } else {
             warningList = null;
         }
-        dataServicesProvider = connectInfo.get(
-            RolapConnectionProperties.DataServicesProvider.name());
+        dataServicesProvider = connectInfo.get(RolapConnectionProperties.DataServicesProvider.name());
     }
 
     public String getUniqueName() {
@@ -221,13 +253,10 @@ public class RolapSchema extends OlapElementBase implements Schema {
     }
 
     public String getDescription() {
-        return larder.get(
-            LocalizedProperty.DESCRIPTION, Larders.DEFAULT_LOCALE);
+        return larder.get(LocalizedProperty.DESCRIPTION, Larders.DEFAULT_LOCALE);
     }
 
-    public OlapElement lookupChild(
-        SchemaReader schemaReader, Id.Segment s, MatchType matchType)
-    {
+    public OlapElement lookupChild(SchemaReader schemaReader, Id.Segment s, MatchType matchType) {
         throw new UnsupportedOperationException();
     }
 
@@ -282,10 +311,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
             // Only clear the JDBC cache to prevent leaks.
             flushJdbcSchema();
         } catch (Throwable t) {
-            LOGGER.info(
-                MondrianResource.instance()
-                    .FinalizerErrorRolapSchema.baseMessage,
-                t);
+            LOGGER.info(MondrianResource.instance().FinalizerErrorRolapSchema.baseMessage, t);
         }
     }
 
@@ -314,7 +340,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
     }
 
     public List<Exception> getWarnings() {
-        return Collections.unmodifiableList(Util.<Exception>cast(warningList));
+        return Collections.unmodifiableList(Util.<Exception> cast(warningList));
     }
 
     public RoleFactory getDefaultRole() {
@@ -355,8 +381,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
     }
 
     public Dimension createDimension(Cube cube, String xml) {
-        throw new UnsupportedOperationException(
-            "Support for Schema.createDimension has been removed in Mondrian 4.0");
+        throw new UnsupportedOperationException("Support for Schema.createDimension has been removed in Mondrian 4.0");
     }
 
     public Cube createCube(String xml) {
@@ -406,8 +431,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
      */
     public List<RolapCube> getCubesWithStar(RolapStar star) {
         List<RolapCube> list = new ArrayList<RolapCube>();
-        cubeLoop:
-        for (RolapCube cube : mapNameToCube.values()) {
+        cubeLoop: for (RolapCube cube : mapNameToCube.values()) {
             for (Member member : cube.getMeasures()) {
                 if (member instanceof RolapStoredMeasure) {
                     RolapStoredMeasure measure = (RolapStoredMeasure) member;
@@ -437,9 +461,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
      * @see #lookupCube(String)
      */
     protected void addCube(final RolapCube cube) {
-        mapNameToCube.put(
-            Util.normalizeName(cube.getName()),
-            cube);
+        mapNameToCube.put(Util.normalizeName(cube.getName()), cube);
     }
 
     protected void addNamedSet(String name, NamedSet namedSet) {
@@ -447,8 +469,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
     }
 
     public boolean removeCube(final String cubeName) {
-        final RolapCube cube =
-            mapNameToCube.remove(Util.normalizeName(cubeName));
+        final RolapCube cube = mapNameToCube.remove(Util.normalizeName(cubeName));
         return cube != null;
     }
 
@@ -491,8 +512,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
     }
 
     public Parameter[] getParameters() {
-        return parameterList.toArray(
-            new Parameter[parameterList.size()]);
+        return parameterList.toArray(new Parameter[parameterList.size()]);
     }
 
     /**
@@ -506,33 +526,24 @@ public class RolapSchema extends OlapElementBase implements Schema {
      *   (otherwise it is a user-error).
      * @param script Script
      */
-    void defineFunction(
-        Map<String, UdfResolver.UdfFactory> mapNameToUdf,
-        final String name,
-        String className,
-        final Scripts.ScriptDefinition script)
-    {
+    void defineFunction(Map<String, UdfResolver.UdfFactory> mapNameToUdf, final String name, String className,
+            final Scripts.ScriptDefinition script) {
         if (className == null && script == null) {
-            throw Util.newError(
-                "Must specify either className attribute or Script element");
+            throw Util.newError("Must specify either className attribute or Script element");
         }
         if (className != null && script != null) {
-            throw Util.newError(
-                "Must not specify both className attribute and Script element");
+            throw Util.newError("Must not specify both className attribute and Script element");
         }
         final UdfResolver.UdfFactory udfFactory;
         if (className != null) {
             // Lookup class.
             try {
-                final Class<UserDefinedFunction> klass =
-                    ClassResolver.INSTANCE.forName(className, true);
+                final Class<UserDefinedFunction> klass = ClassResolver.INSTANCE.forName(className, true);
 
                 // Instantiate UDF by calling correct constructor.
                 udfFactory = new UdfResolver.ClassUdfFactory(klass, name);
             } catch (ClassNotFoundException e) {
-                throw MondrianResource.instance().UdfClassNotFound.ex(
-                    name,
-                    className);
+                throw MondrianResource.instance().UdfClassNotFound.ex(name, className);
             }
         } else {
             udfFactory = new UdfResolver.UdfFactory() {
@@ -561,9 +572,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
         // Check that the name is not null or empty.
         final String udfName = udf.getName();
         if (udfName == null || udfName.equals("")) {
-            throw Util.newInternal(
-                "User-defined function defined by class '"
-                + udf.getClass() + "' has empty name");
+            throw Util.newInternal("User-defined function defined by class '" + udf.getClass() + "' has empty name");
         }
         // It's OK for the description to be null.
         final String description = udf.getDescription();
@@ -573,8 +582,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
             Type parameterType = parameterTypes[i];
             if (parameterType == null) {
                 throw Util.newInternal(
-                    "Invalid user-defined function '"
-                    + udfName + "': parameter type #" + i + " is null");
+                        "Invalid user-defined function '" + udfName + "': parameter type #" + i + " is null");
             }
         }
         // It's OK for the reserved words to be null or empty.
@@ -585,44 +593,32 @@ public class RolapSchema extends OlapElementBase implements Schema {
         // impossible to check that now.
         final Type returnType = udf.getReturnType(parameterTypes);
         if (returnType == null) {
-            throw Util.newInternal(
-                "Invalid user-defined function '"
-                + udfName + "': return type is null");
+            throw Util.newInternal("Invalid user-defined function '" + udfName + "': return type is null");
         }
         final Syntax syntax = udf.getSyntax();
         if (syntax == null) {
-            throw Util.newInternal(
-                "Invalid user-defined function '"
-                + udfName + "': syntax is null");
+            throw Util.newInternal("Invalid user-defined function '" + udfName + "': syntax is null");
         }
     }
 
     /**
      * Creates a {@link MemberReader} with which to read a hierarchy.
      */
-    MemberReader createMemberReader(
-        final RolapCubeHierarchy hierarchy,
-        final String memberReaderClass)
-    {
+    MemberReader createMemberReader(final RolapCubeHierarchy hierarchy, final String memberReaderClass) {
         if (memberReaderClass != null) {
             Exception e2;
             try {
                 Properties properties = null;
-                Class<?> clazz = ClassResolver.INSTANCE.forName(
-                    memberReaderClass,
-                    true);
-                Constructor<?> constructor = clazz.getConstructor(
-                    RolapHierarchy.class,
-                    Properties.class);
+                Class<?> clazz = ClassResolver.INSTANCE.forName(memberReaderClass, true);
+                Constructor<?> constructor = clazz.getConstructor(RolapHierarchy.class, Properties.class);
                 Object o = constructor.newInstance(hierarchy, properties);
                 if (o instanceof MemberReader) {
                     return (MemberReader) o;
                 } else if (o instanceof MemberSource) {
                     return new CacheMemberReader((MemberSource) o);
                 } else {
-                    throw Util.newInternal(
-                        "member reader class " + clazz
-                        + " does not implement " + MemberSource.class);
+                    throw Util
+                            .newInternal("member reader class " + clazz + " does not implement " + MemberSource.class);
                 }
             } catch (ClassNotFoundException e) {
                 e2 = e;
@@ -635,20 +631,15 @@ public class RolapSchema extends OlapElementBase implements Schema {
             } catch (InvocationTargetException e) {
                 e2 = e;
             }
-            throw Util.newInternal(
-                e2,
-                "while instantiating member reader '" + memberReaderClass);
+            throw Util.newInternal(e2, "while instantiating member reader '" + memberReaderClass);
         } else if (hierarchy.getDimension().hanger) {
             final List<RolapMember> memberList = new ArrayList<RolapMember>();
             if (hierarchy.hasAll()) {
                 memberList.add(hierarchy.getAllMember());
             }
-            return new CacheMemberReader(
-                new HangerMemberSource(hierarchy, memberList));
+            return new CacheMemberReader(new HangerMemberSource(hierarchy, memberList));
         } else {
-            DataServicesProvider provider =
-                DataServicesLocator.getDataServicesProvider(
-                    getDataServiceProviderName());
+            DataServicesProvider provider = DataServicesLocator.getDataServicesProvider(getDataServiceProviderName());
 
             MemberReader source = provider.getMemberReader(hierarchy);
 
@@ -695,10 +686,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
         return new RolapStar(this, dataSource, fact);
     }
 
-    void registerRoles(
-        Map<String, RoleFactory> roles,
-        RoleFactory defaultRole)
-    {
+    void registerRoles(Map<String, RoleFactory> roles, RoleFactory defaultRole) {
         for (Map.Entry<String, RoleFactory> entry : roles.entrySet()) {
             mapNameToRole.put(entry.getKey(), entry.getValue());
         }
@@ -706,9 +694,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
         this.defaultRole = defaultRole;
     }
 
-    void initFunctionTable(
-        Collection<UdfResolver.UdfFactory> userDefinedFunctions)
-    {
+    void initFunctionTable(Collection<UdfResolver.UdfFactory> userDefinedFunctions) {
         funTable = new RolapSchemaFunctionTable(userDefinedFunctions);
         ((RolapSchemaFunctionTable) funTable).init();
     }
@@ -718,10 +704,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
      */
     private static class HangerMemberSource extends ArrayMemberSource {
         /** Creates a HangerMemberSource. */
-        public HangerMemberSource(
-            RolapCubeHierarchy hierarchy,
-            List<RolapMember> memberList)
-        {
+        public HangerMemberSource(RolapCubeHierarchy hierarchy, List<RolapMember> memberList) {
             super(hierarchy, memberList);
         }
     }
@@ -730,8 +713,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
      * <code>RolapStarRegistry</code> is a registry for {@link RolapStar}s.
      */
     public class RolapStarRegistry {
-        private final Map<PhysRelation, RolapStar> stars =
-            new HashMap<PhysRelation, RolapStar>();
+        private final Map<PhysRelation, RolapStar> stars = new HashMap<PhysRelation, RolapStar>();
 
         RolapStarRegistry() {
         }
@@ -741,9 +723,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
          *
          * <p> {@link RolapSchemaUpgrader#addJoin} works in a similar way.
          */
-        synchronized RolapStar getOrCreateStar(
-            final PhysRelation fact)
-        {
+        synchronized RolapStar getOrCreateStar(final PhysRelation fact) {
             RolapStar star = stars.get(fact);
             if (star == null) {
                 star = makeRolapStar(fact);
@@ -754,11 +734,8 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
         synchronized RolapStar getStar(final String factTableName) {
             for (RolapStar star : getStars()) {
-                final String starFactTable =
-                    star.getFactTable().getTableName();
-                if (starFactTable != null
-                    && starFactTable.equals(factTableName))
-                {
+                final String starFactTable = star.getFactTable().getTableName();
+                if (starFactTable != null && starFactTable.equals(factTableName)) {
                     return star;
                 }
             }
@@ -845,9 +822,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param location Location
          * @param attributeName Attribute name (may be null)
          */
-        XmlLocationImpl(
-            NodeDef node, Location location, String attributeName)
-        {
+        XmlLocationImpl(NodeDef node, Location location, String attributeName) {
             this.node = node;
             this.location = location;
             this.attributeName = attributeName;
@@ -882,21 +857,18 @@ public class RolapSchema extends OlapElementBase implements Schema {
         // We use a linked hash map for determinacy; the order that tables are
         // declared doesn't matter (except that if there are duplicates, the
         // later one will be discarded).
-        final LinkedHashMap<String, PhysRelation> tablesByName =
-            new LinkedHashMap<String, PhysRelation>();
+        final LinkedHashMap<String, PhysRelation> tablesByName = new LinkedHashMap<String, PhysRelation>();
         final Dialect dialect;
         final JdbcSchema jdbcSchema;
 
         final Set<PhysLink> linkSet = new HashSet<PhysLink>();
 
-        private final Map<PhysRelation, List<PhysLink>> hardLinksFrom =
-            new HashMap<PhysRelation, List<PhysLink>>();
+        private final Map<PhysRelation, List<PhysLink>> hardLinksFrom = new HashMap<PhysRelation, List<PhysLink>>();
 
         private int nextAliasId = 0;
 
-        private final PhysSchemaGraph schemaGraph =
-            new PhysSchemaGraph(
-                this, Collections.<RolapSchema.PhysLink>emptyList());
+        private final PhysSchemaGraph schemaGraph = new PhysSchemaGraph(this,
+                Collections.<RolapSchema.PhysLink> emptyList());
 
         private int columnCount;
 
@@ -911,15 +883,10 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param dataServicesProvider DataServicesProvider to supply
          *                             JdbcSchemaFactory
          */
-        public PhysSchema(
-            Dialect dialect,
-            RolapConnection internalConnection,
-            DataServicesProvider dataServicesProvider)
-        {
+        public PhysSchema(Dialect dialect, RolapConnection internalConnection,
+                DataServicesProvider dataServicesProvider) {
             this.dialect = dialect;
-            this.jdbcSchema =
-                JdbcSchema.makeDB(
-                    internalConnection.getDataSource(),
+            this.jdbcSchema = JdbcSchema.makeDB(internalConnection.getDataSource(),
                     dataServicesProvider.getJdbcSchemaFactory());
             jdbcSchema.load();
             statistic = new PhysStatistic(dialect, internalConnection);
@@ -936,14 +903,9 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * referenced
          * @return whether the link was added (per {@link Set#add(Object)})
          */
-        public boolean addLink(
-            PhysKey sourceKey,
-            PhysRelation targetRelation,
-            List<PhysColumn> columnList,
-            boolean hard)
-        {
-            final PhysLink physLink =
-                new PhysLink(sourceKey, targetRelation, columnList);
+        public boolean addLink(PhysKey sourceKey, PhysRelation targetRelation, List<PhysColumn> columnList,
+                boolean hard) {
+            final PhysLink physLink = new PhysLink(sourceKey, targetRelation, columnList);
             if (hard) {
                 List<PhysLink> list = hardLinksFrom.get(targetRelation);
                 if (list == null) {
@@ -999,27 +961,25 @@ public class RolapSchema extends OlapElementBase implements Schema {
             return schemaGraph;
         }
 
+        public LinkedHashMap<String, PhysRelation> getTablesByName() {
+            return tablesByName;
+        }
+
         public int getColumnCount() {
             return columnCount;
         }
 
-        List<ColumnInfo> describe(
-            RolapSchemaLoader loader,
-            NodeDef xmlNode,
-            String sql)
-        {
+        List<ColumnInfo> describe(RolapSchemaLoader loader, NodeDef xmlNode, String sql) {
             java.sql.Connection connection = null;
             PreparedStatement pstmt = null;
             try {
-                connection =
-                    jdbcSchema.getDataSource().getConnection();
+                connection = jdbcSchema.getDataSource().getConnection();
                 pstmt = connection.prepareStatement(sql);
                 final ResultSetMetaData metaData = pstmt.getMetaData();
                 final int columnCount = metaData.getColumnCount();
-                final List<ColumnInfo> columnInfoList =
-                    new ArrayList<ColumnInfo>();
+                final List<ColumnInfo> columnInfoList = new ArrayList<ColumnInfo>();
                 for (int i = 0; i < columnCount; i++) {
-                    final String columnName =  metaData.getColumnName(i + 1);
+                    final String columnName = metaData.getColumnName(i + 1);
                     final String typeName = metaData.getColumnTypeName(i + 1);
                     final int type = metaData.getColumnType(i + 1);
                     // REVIEW: We want the physical size of the column in bytes.
@@ -1027,21 +987,15 @@ public class RolapSchema extends OlapElementBase implements Schema {
                     //  from DatabaseMetaData.getColumns for a base table.
                     final int columnSize = metaData.getColumnDisplaySize(i + 1);
                     assert columnSize > 0;
-                    final Dialect.Datatype datatype =
-                        dialect.sqlTypeToDatatype(typeName, type);
+                    final Dialect.Datatype datatype = dialect.sqlTypeToDatatype(typeName, type);
                     if (datatype == null) {
-                        loader.getHandler().warning(
-                            "Unknown data type "
-                            + typeName + " (" + type + ") for column "
-                            + columnName + " of view; mondrian is probably"
-                            + " not familiar with this database's type"
-                            + " system",
-                            xmlNode,
-                            null);
+                        loader.getHandler()
+                                .warning("Unknown data type " + typeName + " (" + type + ") for column " + columnName
+                                        + " of view; mondrian is probably" + " not familiar with this database's type"
+                                        + " system", xmlNode, null);
                         continue;
                     }
-                    columnInfoList.add(
-                        new ColumnInfo(columnName, datatype, columnSize));
+                    columnInfoList.add(new ColumnInfo(columnName, datatype, columnSize));
                 }
                 pstmt.close();
                 pstmt = null;
@@ -1049,9 +1003,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
                 connection = null;
                 return columnInfoList;
             } catch (SQLException e) {
-                loader.getHandler().warning(
-                    "View is invalid: " + e.getMessage() + "\nSQL: " + sql,
-                    xmlNode, null, e);
+                loader.getHandler().warning("View is invalid: " + e.getMessage() + "\nSQL: " + sql, xmlNode, null, e);
                 return null;
             } finally {
                 //noinspection ThrowableResultOfMethodCallIgnored
@@ -1060,9 +1012,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
         }
     }
 
-    public static abstract class AttributeLink
-        implements DirectedGraph.Edge<RolapAttribute>
-    {
+    public static abstract class AttributeLink implements DirectedGraph.Edge<RolapAttribute> {
     }
 
     /**
@@ -1071,14 +1021,12 @@ public class RolapSchema extends OlapElementBase implements Schema {
      */
     public static class AttributeGraph {
 
-        private final DirectedGraph<RolapAttribute, AttributeLink> graph =
-            new DirectedGraph<RolapAttribute, AttributeLink>();
+        private final DirectedGraph<RolapAttribute, AttributeLink> graph = new DirectedGraph<RolapAttribute, AttributeLink>();
 
         /**
          * Creates an AttributeGraph.
          */
-        public AttributeGraph()
-        {
+        public AttributeGraph() {
         }
     }
 
@@ -1089,8 +1037,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
     public static class PhysSchemaGraph {
         private final PhysSchema physSchema;
 
-        private final DirectedGraph<PhysRelation, PhysLink> graph =
-            new DirectedGraph<PhysRelation, PhysLink>();
+        private final DirectedGraph<PhysRelation, PhysLink> graph = new DirectedGraph<PhysRelation, PhysLink>();
 
         /**
          * Creates a PhysSchemaGraph.
@@ -1099,10 +1046,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param linkList Links of the graph; a subset of the links in the
          * schema
          */
-        public PhysSchemaGraph(
-            PhysSchema physSchema,
-            Collection<PhysLink> linkList)
-        {
+        public PhysSchemaGraph(PhysSchema physSchema, Collection<PhysLink> linkList) {
             this.physSchema = physSchema;
 
             // Populate the graph. Check that every link connects a pair of
@@ -1110,6 +1054,10 @@ public class RolapSchema extends OlapElementBase implements Schema {
             for (PhysLink link : linkList) {
                 addLink(link);
             }
+        }
+
+        public DirectedGraph<PhysRelation, PhysLink> getGraph() {
+            return this.graph;
         }
 
         /**
@@ -1144,13 +1092,8 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param directed Whether to treat graph as directed
          * @throws PhysSchemaException if there is not a unique path
          */
-        private void addHopsBetween(
-            PhysPathBuilder pathBuilder,
-            PhysRelation prevRelation,
-            Set<PhysRelation> nextRelations,
-            boolean directed)
-            throws PhysSchemaException
-        {
+        private void addHopsBetween(PhysPathBuilder pathBuilder, PhysRelation prevRelation,
+                Set<PhysRelation> nextRelations, boolean directed) throws PhysSchemaException {
             if (nextRelations.contains(prevRelation)) {
                 return;
             }
@@ -1158,8 +1101,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
                 throw new IllegalArgumentException("nextRelations is empty");
             }
             if (directed) {
-                final List<PhysLink> path =
-                    findUniquePath(prevRelation, nextRelations);
+                final List<PhysLink> path = findUniquePath(prevRelation, nextRelations);
                 for (PhysLink link : path) {
                     if (nextRelations.contains(link.targetRelation)) {
                         break;
@@ -1167,19 +1109,12 @@ public class RolapSchema extends OlapElementBase implements Schema {
                     pathBuilder.add(link, link.sourceKey.relation, true);
                 }
             } else {
-                List<Pair<PhysLink, Boolean>> path =
-                    findUniquePathUndirected(prevRelation, nextRelations);
+                List<Pair<PhysLink, Boolean>> path = findUniquePathUndirected(prevRelation, nextRelations);
                 for (Pair<PhysLink, Boolean> pair : path) {
                     final PhysLink link = pair.left;
                     final boolean forward = pair.right;
-                    PhysRelation targetRelation =
-                        forward
-                            ? link.targetRelation
-                            : link.sourceKey.relation;
-                    PhysRelation sourceRelation =
-                        forward
-                            ? link.sourceKey.relation
-                            : link.targetRelation;
+                    PhysRelation targetRelation = forward ? link.targetRelation : link.sourceKey.relation;
+                    PhysRelation sourceRelation = forward ? link.sourceKey.relation : link.targetRelation;
                     if (nextRelations.contains(targetRelation)) {
                         break;
                     }
@@ -1188,39 +1123,27 @@ public class RolapSchema extends OlapElementBase implements Schema {
             }
         }
 
-        private List<PhysLink> findUniquePath(
-            PhysRelation prevRelation,
-            Set<PhysRelation> nextRelations)
-            throws PhysSchemaException
-        {
+        private List<PhysLink> findUniquePath(PhysRelation prevRelation, Set<PhysRelation> nextRelations)
+                throws PhysSchemaException {
             for (PhysRelation nextRelation : nextRelations) {
-                final List<List<PhysLink>> pathList =
-                    graph.findAllPaths(prevRelation, nextRelation);
+                final List<List<PhysLink>> pathList = graph.findAllPaths(prevRelation, nextRelation);
                 switch (pathList.size()) {
                 case 0:
                     continue;
                 case 1:
                     return pathList.get(0);
                 default:
-                    throw new PhysSchemaException(
-                        "Needed to find exactly one path from " + prevRelation
-                        + " to " + nextRelation + ", but found "
-                        + pathList.size() + " (" + pathList + ")");
+                    throw new PhysSchemaException("Needed to find exactly one path from " + prevRelation + " to "
+                            + nextRelation + ", but found " + pathList.size() + " (" + pathList + ")");
                 }
             }
-            throw new PhysSchemaException(
-                "Could not find a path from " + prevRelation
-                + " to any of " + nextRelations);
+            throw new PhysSchemaException("Could not find a path from " + prevRelation + " to any of " + nextRelations);
         }
 
-        private List<Pair<PhysLink, Boolean>> findUniquePathUndirected(
-            PhysRelation prevRelation,
-            Set<PhysRelation> nextRelations)
-            throws PhysSchemaException
-        {
+        private List<Pair<PhysLink, Boolean>> findUniquePathUndirected(PhysRelation prevRelation,
+                Set<PhysRelation> nextRelations) throws PhysSchemaException {
             for (PhysRelation nextRelation : nextRelations) {
-                List<List<Pair<PhysLink, Boolean>>> pathList =
-                    graph.findAllPathsUndirected(prevRelation, nextRelation);
+                List<List<Pair<PhysLink, Boolean>>> pathList = graph.findAllPathsUndirected(prevRelation, nextRelation);
                 switch (pathList.size()) {
                 case 0:
                     continue;
@@ -1231,18 +1154,14 @@ public class RolapSchema extends OlapElementBase implements Schema {
                     // we use the one with the least amount of joins.
                     List<Pair<PhysLink, Boolean>> smallest = null;
                     for (List<Pair<PhysLink, Boolean>> path : pathList) {
-                        if (smallest == null
-                            || smallest.size() > path.size())
-                        {
+                        if (smallest == null || smallest.size() > path.size()) {
                             smallest = path;
                         }
                     }
                     return smallest;
                 }
             }
-            throw new PhysSchemaException(
-                "Could not find a path from " + prevRelation
-                + " to any of " + nextRelations);
+            throw new PhysSchemaException("Could not find a path from " + prevRelation + " to any of " + nextRelations);
         }
 
         /**
@@ -1254,11 +1173,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
          *
          * @throws PhysSchemaException if there is not a unique path
          */
-        public PhysPath findPath(
-            PhysRelation relation,
-            PhysRelation relation1)
-            throws PhysSchemaException
-        {
+        public PhysPath findPath(PhysRelation relation, PhysRelation relation1) throws PhysSchemaException {
             return findPath(relation, Collections.singleton(relation1), true);
         }
 
@@ -1273,18 +1188,10 @@ public class RolapSchema extends OlapElementBase implements Schema {
          *
          * @throws PhysSchemaException if there is not a unique path
          */
-        public PhysPath findPath(
-            PhysRelation relation,
-            Set<PhysRelation> targetRelations,
-            boolean directed)
-            throws PhysSchemaException
-        {
+        public PhysPath findPath(PhysRelation relation, Set<PhysRelation> targetRelations, boolean directed)
+                throws PhysSchemaException {
             final PhysPathBuilder pathBuilder = new PhysPathBuilder(relation);
-            addHopsBetween(
-                pathBuilder,
-                relation,
-                targetRelations,
-                directed);
+            addHopsBetween(pathBuilder, relation, targetRelations, directed);
             return pathBuilder.done();
         }
 
@@ -1299,16 +1206,9 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @throws mondrian.rolap.RolapSchema.PhysSchemaException If no path
          *   can be found
          */
-        public void findPath(
-            PhysPathBuilder pathBuilder,
-            PhysRelation relation)
-            throws PhysSchemaException
-        {
-            addHopsBetween(
-                pathBuilder,
-                pathBuilder.hopList.get(
-                    pathBuilder.hopList.size() - 1).relation,
-                Collections.<PhysRelation>singleton(relation), true);
+        public void findPath(PhysPathBuilder pathBuilder, PhysRelation relation) throws PhysSchemaException {
+            addHopsBetween(pathBuilder, pathBuilder.hopList.get(pathBuilder.hopList.size() - 1).relation,
+                    Collections.<PhysRelation> singleton(relation), true);
         }
     }
 
@@ -1381,18 +1281,13 @@ public class RolapSchema extends OlapElementBase implements Schema {
     static abstract class PhysRelationImpl implements PhysRelation {
         final PhysSchema physSchema;
         final String alias;
-        final LinkedHashMap<String, PhysColumn> columnsByName =
-            new LinkedHashMap<String, PhysColumn>();
-        final LinkedHashMap<String, PhysKey> keysByName =
-            new LinkedHashMap<String, PhysKey>();
+        final LinkedHashMap<String, PhysColumn> columnsByName = new LinkedHashMap<String, PhysColumn>();
+        final LinkedHashMap<String, PhysKey> keysByName = new LinkedHashMap<String, PhysKey>();
         private boolean populated;
         private int totalColumnByteCount;
         private int rowCount;
 
-        PhysRelationImpl(
-            PhysSchema physSchema,
-            String alias)
-        {
+        PhysRelationImpl(PhysSchema physSchema, String alias) {
             this.alias = alias;
             this.physSchema = physSchema;
         }
@@ -1429,9 +1324,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
             PhysColumn column = columnsByName.get(columnName);
 
             if (column == null && fail) {
-                throw Util.newError(
-                    "Column '" + columnName + "' not found in relation '"
-                    + this + "'");
+                throw Util.newError("Column '" + columnName + "' not found in relation '" + this + "'");
             }
             return column;
         }
@@ -1456,9 +1349,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
             return rowCount;
         }
 
-        public PhysKey lookupKey(
-            List<PhysColumn> physColumnList, boolean add)
-        {
+        public PhysKey lookupKey(List<PhysColumn> physColumnList, boolean add) {
             for (PhysKey key : keysByName.values()) {
                 if (key.columnList.equals(physColumnList)) {
                     return key;
@@ -1510,10 +1401,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param xmlNode XML element
          * @return whether was populated successfully this call or previously
          */
-        public boolean ensurePopulated(
-            RolapSchemaLoader loader,
-            NodeDef xmlNode)
-        {
+        public boolean ensurePopulated(RolapSchemaLoader loader, NodeDef xmlNode) {
             if (!populated) {
                 final int[] rowCountAndSize = new int[2];
                 populated = populateColumns(loader, xmlNode, rowCountAndSize);
@@ -1535,15 +1423,10 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param xmlNode XML element
          * @param rowCountAndSize Output array, to hold the number of rows in
          */
-        protected abstract boolean populateColumns(
-            RolapSchemaLoader loader,
-            NodeDef xmlNode,
-            int[] rowCountAndSize);
+        protected abstract boolean populateColumns(RolapSchemaLoader loader, NodeDef xmlNode, int[] rowCountAndSize);
 
         public void addColumn(PhysColumn column) {
-            columnsByName.put(
-                column.name,
-                column);
+            columnsByName.put(column.name, column);
         }
     }
 
@@ -1558,10 +1441,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
      * string, but here we already know which dialect we are dealing with, so
      * there is a single SQL string.
      */
-    public static class PhysView
-        extends PhysRelationImpl
-        implements PhysRelation
-    {
+    public static class PhysView extends PhysRelationImpl implements PhysRelation {
         private final String sqlString;
 
         /**
@@ -1571,11 +1451,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param alias Alias
          * @param sqlString SQL string
          */
-        PhysView(
-            PhysSchema physSchema,
-            String alias,
-            String sqlString)
-        {
+        PhysView(PhysSchema physSchema, String alias, String sqlString) {
             super(physSchema, alias);
             this.sqlString = sqlString;
             assert sqlString != null && sqlString.length() > 0 : sqlString;
@@ -1608,30 +1484,19 @@ public class RolapSchema extends OlapElementBase implements Schema {
             }
             if (obj instanceof PhysView) {
                 PhysView that = (PhysView) obj;
-                return this.alias.equals(that.alias)
-                    && this.sqlString.equals(that.sqlString)
-                    && this.physSchema.equals(that.physSchema);
+                return this.alias.equals(that.alias) && this.sqlString.equals(that.sqlString)
+                        && this.physSchema.equals(that.physSchema);
             }
             return false;
         }
 
-        protected boolean populateColumns(
-            RolapSchemaLoader loader,
-            NodeDef xmlNode,
-            int[] rowCountAndSize)
-        {
-            final List<ColumnInfo> columnInfoList =
-                physSchema.describe(loader, xmlNode, sqlString);
+        protected boolean populateColumns(RolapSchemaLoader loader, NodeDef xmlNode, int[] rowCountAndSize) {
+            final List<ColumnInfo> columnInfoList = physSchema.describe(loader, xmlNode, sqlString);
             if (columnInfoList == null) {
                 return false;
             }
             for (ColumnInfo columnInfo : columnInfoList) {
-                addColumn(
-                    new RolapSchema.PhysRealColumn(
-                        this,
-                        columnInfo.name,
-                        columnInfo.datatype,
-                        null,
+                addColumn(new RolapSchema.PhysRealColumn(this, columnInfo.name, columnInfo.datatype, null,
                         columnInfo.size));
             }
             final int rowCount = 1; // TODO:
@@ -1661,10 +1526,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
      * Relation defined by a fixed set of explicit row values. The number of
      * rows is generally small.
      */
-    public static class PhysInlineTable
-        extends PhysRelationImpl
-        implements PhysRelation
-    {
+    public static class PhysInlineTable extends PhysRelationImpl implements PhysRelation {
         final List<String[]> rowList = new ArrayList<String[]>();
 
         /**
@@ -1673,17 +1535,13 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param physSchema Schema
          * @param alias Name of inline table within schema
          */
-        PhysInlineTable(
-            PhysSchema physSchema,
-            String alias)
-        {
+        PhysInlineTable(PhysSchema physSchema, String alias) {
             super(physSchema, alias);
             assert alias != null;
         }
 
         public PhysRelation cloneWithAlias(String newAlias) {
-            PhysInlineTable physInlineTable =
-                new PhysInlineTable(this.physSchema, newAlias);
+            PhysInlineTable physInlineTable = new PhysInlineTable(this.physSchema, newAlias);
             physInlineTable.addAllColumns(this);
             physInlineTable.addAllKeys(this);
             physInlineTable.setPopulated(true);
@@ -1710,15 +1568,12 @@ public class RolapSchema extends OlapElementBase implements Schema {
             }
             if (obj instanceof PhysInlineTable) {
                 PhysInlineTable that = (PhysInlineTable) obj;
-                return this.alias.equals(that.alias)
-                    && this.physSchema.equals(that.physSchema);
+                return this.alias.equals(that.alias) && this.physSchema.equals(that.physSchema);
             }
             return false;
         }
 
-        protected boolean populateColumns(
-            RolapSchemaLoader loader, NodeDef xmlNode, int[] rowCountAndSize)
-        {
+        protected boolean populateColumns(RolapSchemaLoader loader, NodeDef xmlNode, int[] rowCountAndSize) {
             // not much to do; was populated on creation
             rowCountAndSize[0] = rowList.size();
             rowCountAndSize[1] = columnsByName.size() * 4;
@@ -1726,8 +1581,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
         }
     }
 
-    public static class PhysTable extends PhysRelationImpl
-    {
+    public static class PhysTable extends PhysRelationImpl {
         final String schemaName;
         final String name;
         private Map<String, String> hintMap;
@@ -1753,13 +1607,8 @@ public class RolapSchema extends OlapElementBase implements Schema {
          *     be unique within relations in this schema
          * @param hintMap Map from hint type to hint text
          */
-        public PhysTable(
-            PhysSchema physSchema,
-            String schemaName,
-            String name,
-            String alias,
-            Map<String, String> hintMap)
-        {
+        public PhysTable(PhysSchema physSchema, String schemaName, String name, String alias,
+                Map<String, String> hintMap) {
             super(physSchema, alias);
             this.schemaName = schemaName;
             this.name = name;
@@ -1769,8 +1618,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
         }
 
         public PhysRelation cloneWithAlias(String newAlias) {
-            PhysTable physTable = new PhysTable(
-                physSchema, schemaName, name, newAlias, hintMap);
+            PhysTable physTable = new PhysTable(physSchema, schemaName, name, newAlias, hintMap);
             physTable.addAllColumns(this);
             physTable.addAllKeys(this);
             physTable.setPopulated(true);
@@ -1783,14 +1631,11 @@ public class RolapSchema extends OlapElementBase implements Schema {
         }
 
         public String toString() {
-            return (schemaName == null ? "" : (schemaName + '.'))
-                + name
-                + (name.equals(alias) ? "" : (" as " + alias));
+            return (schemaName == null ? "" : (schemaName + '.')) + name + (name.equals(alias) ? "" : (" as " + alias));
         }
 
         public int hashCode() {
-            return Util.hashV(
-                0, physSchema, schemaName, name, alias);
+            return Util.hashV(0, physSchema, schemaName, name, alias);
         }
 
         public boolean equals(Object obj) {
@@ -1799,10 +1644,8 @@ public class RolapSchema extends OlapElementBase implements Schema {
             }
             if (obj instanceof PhysTable) {
                 PhysTable that = (PhysTable) obj;
-                return alias.equals(that.alias)
-                    && name.equals(that.name)
-                    && schemaName.equals(that.schemaName)
-                    && physSchema.equals(that.physSchema);
+                return alias.equals(that.alias) && name.equals(that.name) && schemaName.equals(that.schemaName)
+                        && physSchema.equals(that.physSchema);
             }
             return false;
         }
@@ -1825,54 +1668,33 @@ public class RolapSchema extends OlapElementBase implements Schema {
             return name;
         }
 
-        protected boolean populateColumns(
-            RolapSchemaLoader loader, NodeDef xmlNode, int[] rowCountAndSize)
-        {
-            JdbcSchema.Table jdbcTable =
-                physSchema.jdbcSchema.getTable(name);
+        protected boolean populateColumns(RolapSchemaLoader loader, NodeDef xmlNode, int[] rowCountAndSize) {
+            JdbcSchema.Table jdbcTable = physSchema.jdbcSchema.getTable(name);
             if (jdbcTable == null) {
                 if (hook == null) {
-                    loader.getHandler().warning(
-                        "Table '" + name + "' does not exist in database.",
-                        xmlNode,
-                        null);
+                    loader.getHandler().warning("Table '" + name + "' does not exist in database.", xmlNode, null);
                     return false;
                 }
-                hook.apply(
-                    this,
-                    loader.schema.getInternalConnection());
+                hook.apply(this, loader.schema.getInternalConnection());
                 hook = null;
                 try {
                     jdbcTable = physSchema.jdbcSchema.reloadTable(name);
                 } catch (SQLException e) {
-                    throw Util.newError(
-                        "Error while re-loading table '" + name + "'");
+                    throw Util.newError("Error while re-loading table '" + name + "'");
                 }
             }
             try {
                 jdbcTable.load();
             } catch (SQLException e) {
-                throw Util.newError(
-                    "Error while loading columns of table '" + name + "'");
+                throw Util.newError("Error while loading columns of table '" + name + "'");
             }
 
-            rowCount =
-                physSchema.statistic.getRelationCardinality(
-                    this,
-                    alias,
-                    -1);
+            rowCount = physSchema.statistic.getRelationCardinality(this, alias, -1);
 
             for (JdbcSchema.Table.Column jdbcColumn : jdbcTable.getColumns()) {
-                PhysColumn column =
-                    columnsByName.get(
-                        jdbcColumn.getName());
+                PhysColumn column = columnsByName.get(jdbcColumn.getName());
                 if (column == null) {
-                    column =
-                        new PhysRealColumn(
-                            this,
-                            jdbcColumn.getName(),
-                            jdbcColumn.getDatatype(),
-                            null,
+                    column = new PhysRealColumn(this, jdbcColumn.getName(), jdbcColumn.getDatatype(), null,
                             jdbcColumn.getColumnSize());
                     addColumn(column);
                 }
@@ -1893,9 +1715,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
         }
 
         interface Hook {
-            boolean apply(
-                PhysTable table,
-                RolapConnection connection);
+            boolean apply(PhysTable table, RolapConnection connection);
         }
     }
 
@@ -1925,11 +1745,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param name Name of key
          * @param columnList List of columns
          */
-        public PhysKey(
-            PhysRelation relation,
-            String name,
-            List<PhysColumn> columnList)
-        {
+        public PhysKey(PhysRelation relation, String name, List<PhysColumn> columnList) {
             assert relation != null;
             assert name != null;
             assert columnList != null;
@@ -1940,18 +1756,14 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
         @Override
         public int hashCode() {
-            return Util.hashV(
-                0,
-                relation,
-                columnList);
+            return Util.hashV(0, relation, columnList);
         }
 
         @Override
         public boolean equals(Object obj) {
             if (obj instanceof PhysKey) {
                 final PhysKey that = (PhysKey) obj;
-                return this.relation.equals(that.relation)
-                    && this.columnList.equals(that.columnList);
+                return this.relation.equals(that.relation) && this.columnList.equals(that.columnList);
             }
             return false;
         }
@@ -1987,19 +1799,13 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param targetRelation Target table (contains foreign key)
          * @param columnList Foreign key columns in target table
          */
-        public PhysLink(
-            PhysKey sourceKey,
-            PhysRelation targetRelation,
-            List<PhysColumn> columnList)
-        {
+        public PhysLink(PhysKey sourceKey, PhysRelation targetRelation, List<PhysColumn> columnList) {
             this.sourceKey = sourceKey;
             this.targetRelation = targetRelation;
             this.columnList = columnList;
-            assert columnList.size() == sourceKey.columnList.size()
-                : columnList + " vs. " + sourceKey.columnList;
+            assert columnList.size() == sourceKey.columnList.size() : columnList + " vs. " + sourceKey.columnList;
             for (PhysColumn column : columnList) {
-                assert column.relation == targetRelation
-                    : column.relation + "/" + targetRelation;
+                assert column.relation == targetRelation : column.relation + "/" + targetRelation;
             }
             this.sql = deriveSql();
         }
@@ -2011,17 +1817,14 @@ public class RolapSchema extends OlapElementBase implements Schema {
         public boolean equals(Object obj) {
             if (obj instanceof PhysLink) {
                 PhysLink that = (PhysLink) obj;
-                return this.sourceKey.equals(that.sourceKey)
-                    && this.targetRelation.equals(that.targetRelation)
-                    && this.columnList.equals(that.columnList);
+                return this.sourceKey.equals(that.sourceKey) && this.targetRelation.equals(that.targetRelation)
+                        && this.columnList.equals(that.columnList);
             }
             return false;
         }
 
         public String toString() {
-            return "Link from " + targetRelation + " "
-                + columnList
-                + " to " + sourceKey;
+            return "Link from " + targetRelation + " " + columnList + " to " + sourceKey;
         }
 
         public PhysRelation getFrom() {
@@ -2044,8 +1847,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
                 }
                 PhysColumn targetColumn = columnList.get(i);
                 final PhysExpr sourceColumn = sourceKey.columnList.get(i);
-                buf.append(targetColumn.toSql())
-                    .append(" = ").append(sourceColumn.toSql());
+                buf.append(targetColumn.toSql()).append(" = ").append(sourceColumn.toSql());
             }
             return buf.toString();
         }
@@ -2063,8 +1865,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
         /**
          * Calls a callback for each embedded PhysColumn.
          */
-        public abstract void foreachColumn(
-            Util.Function1<PhysColumn, Void> callback);
+        public abstract void foreachColumn(Util.Function1<PhysColumn, Void> callback);
 
         /**
          * Calls a callback for each embedded PhysColumn.
@@ -2072,18 +1873,13 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param queryBuilder Query builder
          * @param joiner Joiner
          */
-        public final void foreachColumn(
-            final SqlQueryBuilder queryBuilder,
-            final SqlQueryBuilder.Joiner joiner)
-        {
-            foreachColumn(
-                new Util.Function1<PhysColumn, Void>() {
-                    public Void apply(PhysColumn column) {
-                        joiner.addColumn(queryBuilder, column);
-                        return null;
-                    }
+        public final void foreachColumn(final SqlQueryBuilder queryBuilder, final SqlQueryBuilder.Joiner joiner) {
+            foreachColumn(new Util.Function1<PhysColumn, Void>() {
+                public Void apply(PhysColumn column) {
+                    joiner.addColumn(queryBuilder, column);
+                    return null;
                 }
-            );
+            });
         }
 
         /**
@@ -2103,20 +1899,14 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
         public Iterable<? extends PhysColumn> columns() {
             final Set<PhysColumn> set = new LinkedHashSet<PhysColumn>();
-            foreachColumn(
-                null,
-                new SqlQueryBuilder.Joiner() {
-                    public void addColumn(
-                        SqlQueryBuilder queryBuilder, PhysColumn column)
-                    {
-                        set.add(column);
-                    }
+            foreachColumn(null, new SqlQueryBuilder.Joiner() {
+                public void addColumn(SqlQueryBuilder queryBuilder, PhysColumn column) {
+                    set.add(column);
+                }
 
-                    public void addRelation(
-                        SqlQueryBuilder queryBuilder, PhysRelation relation)
-                    {
-                    }
-                });
+                public void addRelation(SqlQueryBuilder queryBuilder, PhysRelation relation) {
+                }
+            });
             return set;
         }
     }
@@ -2153,13 +1943,8 @@ public class RolapSchema extends OlapElementBase implements Schema {
         private final int ordinal;
         SqlStatement.Type internalType; // may be null
 
-        public PhysColumn(
-            PhysRelation relation,
-            String name,
-            int columnSize,
-            Dialect.Datatype datatype,
-            SqlStatement.Type internalType)
-        {
+        public PhysColumn(PhysRelation relation, String name, int columnSize, Dialect.Datatype datatype,
+                SqlStatement.Type internalType) {
             assert relation != null;
             assert name != null;
             this.name = name;
@@ -2218,28 +2003,20 @@ public class RolapSchema extends OlapElementBase implements Schema {
     public static final class PhysRealColumn extends PhysColumn {
         private final String sql;
 
-        PhysRealColumn(
-            PhysRelation relation,
-            String name,
-            Dialect.Datatype datatype,
-            SqlStatement.Type internalType,
-            int columnSize)
-        {
+        PhysRealColumn(PhysRelation relation, String name, Dialect.Datatype datatype, SqlStatement.Type internalType,
+                int columnSize) {
             super(relation, name, columnSize, datatype, internalType);
             this.sql = deriveSql();
         }
 
         @Override
         PhysColumn cloneWithAlias(PhysRelation newRelation) {
-            return new PhysRealColumn(
-                newRelation, name, datatype, internalType, columnSize);
+            return new PhysRealColumn(newRelation, name, datatype, internalType, columnSize);
         }
 
         protected String deriveSql() {
-            return relation.getSchema().dialect.quoteIdentifier(
-                relation.getAlias())
-                + '.'
-                + relation.getSchema().dialect.quoteIdentifier(name);
+            return relation.getSchema().dialect.quoteIdentifier(relation.getAlias()) + '.'
+                    + relation.getSchema().dialect.quoteIdentifier(name);
         }
 
         public int hashCode() {
@@ -2252,8 +2029,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
             }
             if (obj instanceof PhysRealColumn) {
                 PhysRealColumn that = (PhysRealColumn) obj;
-                return name.equals(that.name)
-                    && relation.equals(that.relation);
+                return name.equals(that.name) && relation.equals(that.relation);
             }
             return false;
         }
@@ -2269,15 +2045,8 @@ public class RolapSchema extends OlapElementBase implements Schema {
         final List<RolapSchema.PhysExpr> list;
         private String sql;
 
-        PhysCalcColumn(
-            RolapSchemaLoader loader,
-            NodeDef xmlNode,
-            PhysRelation table,
-            String name,
-            Dialect.Datatype datatype,
-            SqlStatement.Type internalType,
-            List<PhysExpr> list)
-        {
+        PhysCalcColumn(RolapSchemaLoader loader, NodeDef xmlNode, PhysRelation table, String name,
+                Dialect.Datatype datatype, SqlStatement.Type internalType, List<PhysExpr> list) {
             super(table, name, 4, datatype, internalType);
             this.loader = loader;
             this.xmlNode = xmlNode;
@@ -2286,21 +2055,15 @@ public class RolapSchema extends OlapElementBase implements Schema {
         }
 
         public void compute() {
-            if (loader != null
-                && !list.isEmpty()
-                && getUnresolvedColumnCount() == 0)
-            {
+            if (loader != null && !list.isEmpty() && getUnresolvedColumnCount() == 0) {
                 sql = deriveSql();
                 if (datatype == null) {
                     final PhysSchema physSchema = relation.getSchema();
                     final SqlQuery query = new SqlQuery(physSchema.dialect);
                     query.addSelect(sql, null);
                     query.addFrom(relation, relation.getAlias(), true);
-                    final List<ColumnInfo> columnInfoList =
-                        physSchema.describe(loader, xmlNode, query.toSql());
-                    if (columnInfoList != null
-                        && columnInfoList.size() == 1)
-                    {
+                    final List<ColumnInfo> columnInfoList = physSchema.describe(loader, xmlNode, query.toSql());
+                    if (columnInfoList != null && columnInfoList.size() == 1) {
                         datatype = columnInfoList.get(0).datatype;
                     }
                 }
@@ -2348,9 +2111,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
         final List<RolapSchema.PhysExpr> list;
         private final String sql;
 
-        PhysCalcExpr(
-            List<RolapSchema.PhysExpr> list)
-        {
+        PhysCalcExpr(List<RolapSchema.PhysExpr> list) {
             assert list != null;
             this.list = list;
             this.sql = deriveSql();
@@ -2391,12 +2152,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
         final String name;
         final ElementDef xml;
 
-        public UnresolvedColumn(
-            PhysRelation relation,
-            String tableName,
-            String name,
-            ElementDef xml)
-        {
+        public UnresolvedColumn(PhysRelation relation, String tableName, String name, ElementDef xml) {
             // Boolean datatype is a dummy value, to keep an assert happy.
             super(relation, name, 0, Dialect.Datatype.Boolean, null);
             assert tableName != null;
@@ -2415,15 +2171,11 @@ public class RolapSchema extends OlapElementBase implements Schema {
         }
 
         public String toSql() {
-            throw new UnsupportedOperationException(
-                "unresolved column " + this);
+            throw new UnsupportedOperationException("unresolved column " + this);
         }
 
         public enum State {
-            UNRESOLVED,
-            ACTIVE,
-            RESOLVED,
-            ERROR
+            UNRESOLVED, ACTIVE, RESOLVED, ERROR
         }
     }
 
@@ -2439,11 +2191,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param link Link from source to target relation
          * @param forward Whether hop is in the default direction of the link
          */
-        public PhysHop(
-            PhysRelation relation,
-            PhysLink link,
-            boolean forward)
-        {
+        public PhysHop(PhysRelation relation, PhysLink link, boolean forward) {
             assert relation != null;
             // link is null for the first hop in a path
             this.relation = relation;
@@ -2452,10 +2200,8 @@ public class RolapSchema extends OlapElementBase implements Schema {
         }
 
         public boolean equals(Object obj) {
-            return obj instanceof PhysHop
-                && relation.equals(((PhysHop) obj).relation)
-                && Util.equals(link, ((PhysHop) obj).link)
-                && forward == ((PhysHop) obj).forward;
+            return obj instanceof PhysHop && relation.equals(((PhysHop) obj).relation)
+                    && Util.equals(link, ((PhysHop) obj).link) && forward == ((PhysHop) obj).forward;
         }
 
         public int hashCode() {
@@ -2463,15 +2209,11 @@ public class RolapSchema extends OlapElementBase implements Schema {
         }
 
         public final PhysRelation fromRelation() {
-            return forward
-                ? link.sourceKey.relation
-                : link.targetRelation;
+            return forward ? link.sourceKey.relation : link.targetRelation;
         }
 
         public final PhysRelation toRelation() {
-            return forward
-                ? link.targetRelation
-                : link.sourceKey.relation;
+            return forward ? link.targetRelation : link.sourceKey.relation;
         }
     }
 
@@ -2499,8 +2241,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
     public static class PhysPath {
         public final List<PhysHop> hopList;
 
-        public static final PhysPath EMPTY =
-            new PhysPath(Collections.<PhysHop>emptyList());
+        public static final PhysPath EMPTY = new PhysPath(Collections.<PhysHop> emptyList());
 
         /**
          * Creates a path.
@@ -2554,49 +2295,28 @@ public class RolapSchema extends OlapElementBase implements Schema {
             hopList.addAll(path.hopList);
         }
 
-        public PhysPathBuilder add(
-            PhysKey sourceKey,
-            List<PhysColumn> columnList)
-        {
+        public PhysPathBuilder add(PhysKey sourceKey, List<PhysColumn> columnList) {
             final PhysHop prevHop = hopList.get(hopList.size() - 1);
-            add(
-                new PhysLink(sourceKey, prevHop.relation, columnList),
-                sourceKey.relation,
-                true);
+            add(new PhysLink(sourceKey, prevHop.relation, columnList), sourceKey.relation, true);
             return this;
         }
 
-        public PhysPathBuilder add(
-            PhysLink link,
-            PhysRelation relation,
-            boolean forward)
-        {
+        public PhysPathBuilder add(PhysLink link, PhysRelation relation, boolean forward) {
             return add(new PhysHop(relation, link, forward));
         }
 
-        public PhysPathBuilder add(PhysHop hop)
-        {
+        public PhysPathBuilder add(PhysHop hop) {
             hopList.add(hop);
             return this;
         }
 
-        public PhysPathBuilder prepend(
-            PhysKey sourceKey,
-            List<PhysColumn> columnList)
-        {
+        public PhysPathBuilder prepend(PhysKey sourceKey, List<PhysColumn> columnList) {
             final PhysHop prevHop = hopList.get(0);
-            prepend(
-                new PhysLink(sourceKey, prevHop.relation, columnList),
-                sourceKey.relation,
-                true);
+            prepend(new PhysLink(sourceKey, prevHop.relation, columnList), sourceKey.relation, true);
             return this;
         }
 
-        public PhysPathBuilder prepend(
-            PhysLink link,
-            PhysRelation relation,
-            boolean forward)
-        {
+        public PhysPathBuilder prepend(PhysLink link, PhysRelation relation, boolean forward) {
             if (hopList.size() == 0) {
                 assert link == null;
             } else {
@@ -2611,10 +2331,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
             return new PhysPath(UnmodifiableArrayList.of(hopList));
         }
 
-        @SuppressWarnings({
-            "CloneDoesntCallSuperClone",
-            "CloneDoesntDeclareCloneNotSupportedException"
-        })
+        @SuppressWarnings({ "CloneDoesntCallSuperClone", "CloneDoesntDeclareCloneNotSupportedException" })
         public PhysPathBuilder clone() {
             final PhysPathBuilder pathBuilder = new PhysPathBuilder();
             pathBuilder.hopList.addAll(hopList);
@@ -2702,19 +2419,15 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param measureGroup Measure group
          * @param cubeDimension Joining dimension
          */
-        public CubeRouter(
-            RolapMeasureGroup measureGroup,
-            RolapCubeDimension cubeDimension)
-        {
+        public CubeRouter(RolapMeasureGroup measureGroup, RolapCubeDimension cubeDimension) {
             this.measureGroup = measureGroup;
             this.cubeDimension = cubeDimension;
         }
 
         @Override
         public String toString() {
-            return "CubeRouter(cube=" + measureGroup.getCube().getName()
-                   + ", measureGroup=" + measureGroup.getName()
-                   + ", dimension=" + cubeDimension.getName() + ")";
+            return "CubeRouter(cube=" + measureGroup.getCube().getName() + ", measureGroup=" + measureGroup.getName()
+                    + ", dimension=" + cubeDimension.getName() + ")";
         }
 
         public PhysPath path(PhysColumn column) {
@@ -2740,22 +2453,10 @@ public class RolapSchema extends OlapElementBase implements Schema {
     public static class MondrianSchemaException extends RuntimeException {
         private final XmlLocation xmlLocation;
 
-        public MondrianSchemaException(
-            String message,
-            String nodeDesc,
-            XmlLocation xmlLocation,
-            Severity severity,
-            Throwable cause)
-        {
-            super(
-                message
-                + (nodeDesc == null
-                    ? ""
-                    : " (in " + nodeDesc + ")")
-                + (xmlLocation == null
-                    ? ""
-                    : " (at " + xmlLocation + ")"),
-                cause);
+        public MondrianSchemaException(String message, String nodeDesc, XmlLocation xmlLocation, Severity severity,
+                Throwable cause) {
+            super(message + (nodeDesc == null ? "" : " (in " + nodeDesc + ")")
+                    + (xmlLocation == null ? "" : " (at " + xmlLocation + ")"), cause);
             this.xmlLocation = xmlLocation;
         }
 
@@ -2771,9 +2472,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
     }
 
     static enum Severity {
-        WARNING,
-        ERROR,
-        FATAL
+        WARNING, ERROR, FATAL
     }
 
     static class UnresolvedCalcColumn extends UnresolvedColumn {
@@ -2791,15 +2490,8 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param list List of expressions
          * @param index Index within parent table
          */
-        public UnresolvedCalcColumn(
-            PhysTable physTable,
-            String tableName,
-            MondrianDef.Column columnRef,
-            MondrianDef.SQL sql,
-            PhysCalcColumn physCalcColumn,
-            List<PhysExpr> list,
-            int index)
-        {
+        public UnresolvedCalcColumn(PhysTable physTable, String tableName, MondrianDef.Column columnRef,
+                MondrianDef.SQL sql, PhysCalcColumn physCalcColumn, List<PhysExpr> list, int index) {
             super(physTable, tableName, columnRef.name, sql);
             this.physCalcColumn = physCalcColumn;
             this.list = list;
@@ -2807,14 +2499,11 @@ public class RolapSchema extends OlapElementBase implements Schema {
         }
 
         public String getContext() {
-            return ", in definition of calculated column '"
-                + physCalcColumn.relation.getAlias() + "'.'"
-                + physCalcColumn.name + "'";
+            return ", in definition of calculated column '" + physCalcColumn.relation.getAlias() + "'.'"
+                    + physCalcColumn.name + "'";
         }
 
-        public void onResolve(
-            PhysColumn column)
-        {
+        public void onResolve(PhysColumn column) {
             list.set(index, column);
             physCalcColumn.compute();
         }
@@ -2827,38 +2516,26 @@ public class RolapSchema extends OlapElementBase implements Schema {
      * followed by a cache to store the results.</p>
      */
     public static class PhysStatistic {
-        private final Map<List, Integer> columnMap =
-            new HashMap<List, Integer>();
-        private final Map<List, Integer> tableMap =
-            new HashMap<List, Integer>();
-        private final Map<String, Integer> queryMap =
-            new HashMap<String, Integer>();
+        private final Map<List, Integer> columnMap = new HashMap<List, Integer>();
+        private final Map<List, Integer> tableMap = new HashMap<List, Integer>();
+        private final Map<String, Integer> queryMap = new HashMap<String, Integer>();
         private final Dialect dialect;
         private final Statement internalStatement;
         private final DataSource dataSource;
 
-        PhysStatistic(
-            Dialect dialect,
-            RolapConnection internalConnection)
-        {
+        PhysStatistic(Dialect dialect, RolapConnection internalConnection) {
             this.dialect = dialect;
             this.internalStatement = internalConnection.getInternalStatement();
             this.dataSource = internalConnection.getDataSource();
         }
 
-        public int getRelationCardinality(
-            RolapSchema.PhysRelation relation,
-            String alias,
-            int approxRowCount)
-        {
+        public int getRelationCardinality(RolapSchema.PhysRelation relation, String alias, int approxRowCount) {
             if (approxRowCount >= 0) {
                 return approxRowCount;
             }
             if (relation instanceof RolapSchema.PhysTable) {
-                final RolapSchema.PhysTable table =
-                    (RolapSchema.PhysTable) relation;
-                return getTableCardinality(
-                    null, table.getSchemaName(), table.name);
+                final RolapSchema.PhysTable table = (RolapSchema.PhysTable) relation;
+                return getTableCardinality(null, table.getSchemaName(), table.name);
             } else {
                 final SqlQuery sqlQuery = new SqlQuery(dialect);
                 sqlQuery.addSelect("1", null);
@@ -2867,31 +2544,24 @@ public class RolapSchema extends OlapElementBase implements Schema {
             }
         }
 
-        private int getTableCardinality(
-            String catalog,
-            String schema,
-            String table)
-        {
+        private int getTableCardinality(String catalog, String schema, String table) {
             final List<String> key = Arrays.asList(catalog, schema, table);
             int rowCount = -1;
             if (tableMap.containsKey(key)) {
                 rowCount = tableMap.get(key);
             } else {
                 final Dialect dialect = this.dialect;
-                final List<StatisticsProvider> statisticsProviders =
-                    dialect.getStatisticsProviders();
-                final Execution execution =
-                    new Execution(internalStatement, 0);
-                for (StatisticsProvider statisticsProvider
-                    : statisticsProviders)
-                {
-                    rowCount = statisticsProvider.getTableCardinality(
-                        dialect,
-                        dataSource,
-                        catalog,
-                        schema,
-                        table,
-                        execution);
+                final List<StatisticsProvider> statisticsProviders = dialect.getStatisticsProviders();
+                final Execution execution = new Execution(internalStatement, 0);
+                for (StatisticsProvider statisticsProvider : statisticsProviders) {
+                    //                    rowCount = statisticsProvider.getTableCardinality(
+                    //                        dialect,
+                    //                        dataSource,
+                    //                        catalog,
+                    //                        schema,
+                    //                        table,
+                    //                        execution);
+                    rowCount = 100;
                     if (rowCount >= 0) {
                         break;
                     }
@@ -2910,17 +2580,10 @@ public class RolapSchema extends OlapElementBase implements Schema {
                 rowCount = queryMap.get(sql);
             } else {
                 final Dialect dialect = this.dialect;
-                final List<StatisticsProvider> statisticsProviders =
-                    dialect.getStatisticsProviders();
-                final Execution execution =
-                    new Execution(
-                        internalStatement,
-                        0);
-                for (StatisticsProvider statisticsProvider
-                    : statisticsProviders)
-                {
-                    rowCount = statisticsProvider.getQueryCardinality(
-                        dialect, dataSource, sql, execution);
+                final List<StatisticsProvider> statisticsProviders = dialect.getStatisticsProviders();
+                final Execution execution = new Execution(internalStatement, 0);
+                for (StatisticsProvider statisticsProvider : statisticsProviders) {
+                    rowCount = statisticsProvider.getQueryCardinality(dialect, dataSource, sql, execution);
                     if (rowCount >= 0) {
                         break;
                     }
@@ -2933,62 +2596,41 @@ public class RolapSchema extends OlapElementBase implements Schema {
             return rowCount;
         }
 
-        public int getColumnCardinality(
-            PhysRelation relation,
-            PhysColumn column,
-            int approxCardinality)
-        {
-            if (approxCardinality >= 0) {
-                return approxCardinality;
-            }
-            if (relation instanceof RolapSchema.PhysTable
-                && column instanceof RolapSchema.PhysRealColumn)
-            {
-                final RolapSchema.PhysTable table =
-                    (RolapSchema.PhysTable) relation;
-                return getColumnCardinality(
-                    null,
-                    table.getSchemaName(),
-                    table.name,
-                    column.name);
-            } else {
-                final SqlQuery sqlQuery = new SqlQuery(dialect);
-                sqlQuery.setDistinct(true);
-                sqlQuery.addSelect(column.toSql(), null);
-                sqlQuery.addFrom(relation, null, true);
-                return getQueryCardinality(sqlQuery.toString());
-            }
+        public int getColumnCardinality(PhysRelation relation, PhysColumn column, int approxCardinality) {
+            //            if (approxCardinality >= 0) {
+            ////                return approxCardinality;
+            ////            }
+            ////            if (relation instanceof RolapSchema.PhysTable
+            ////                && column instanceof RolapSchema.PhysRealColumn)
+            ////            {
+            ////                final RolapSchema.PhysTable table =
+            ////                    (RolapSchema.PhysTable) relation;
+            ////                return getColumnCardinality(
+            ////                    null,
+            ////                    table.getSchemaName(),
+            ////                    table.name,
+            ////                    column.name);
+            ////            } else {
+            ////                final SqlQuery sqlQuery = new SqlQuery(dialect);
+            ////                sqlQuery.setDistinct(true);
+            ////                sqlQuery.addSelect(column.toSql(), null);
+            ////                sqlQuery.addFrom(relation, null, true);
+            ////                return getQueryCardinality(sqlQuery.toString());
+            ////            }
+            return 1000;
         }
 
-        private int getColumnCardinality(
-            String catalog,
-            String schema,
-            String table,
-            String column)
-        {
-            final List<String> key =
-                Arrays.asList(catalog, schema, table, column);
+        private int getColumnCardinality(String catalog, String schema, String table, String column) {
+            final List<String> key = Arrays.asList(catalog, schema, table, column);
             int rowCount = -1;
             if (columnMap.containsKey(key)) {
                 rowCount = columnMap.get(key);
             } else {
-                final List<StatisticsProvider> statisticsProviders =
-                    dialect.getStatisticsProviders();
-                final Execution execution =
-                    new Execution(
-                        internalStatement,
-                        0);
-                for (StatisticsProvider statisticsProvider
-                    : statisticsProviders)
-                {
-                    rowCount = statisticsProvider.getColumnCardinality(
-                        dialect,
-                        dataSource,
-                        catalog,
-                        schema,
-                        table,
-                        column,
-                        execution);
+                final List<StatisticsProvider> statisticsProviders = dialect.getStatisticsProviders();
+                final Execution execution = new Execution(internalStatement, 0);
+                for (StatisticsProvider statisticsProvider : statisticsProviders) {
+                    rowCount = statisticsProvider.getColumnCardinality(dialect, dataSource, catalog, schema, table,
+                            column, execution);
                     if (rowCount >= 0) {
                         break;
                     }
@@ -3041,17 +2683,15 @@ public class RolapSchema extends OlapElementBase implements Schema {
         }
 
         public Role create(final Map<String, Object> context) {
-            return RoleImpl.union(
-                new AbstractList<Role>() {
-                    public Role get(int index) {
-                        return factories.get(index).create(context);
-                    }
-
-                    public int size() {
-                        return factories.size();
-                    }
+            return RoleImpl.union(new AbstractList<Role>() {
+                public Role get(int index) {
+                    return factories.get(index).create(context);
                 }
-            );
+
+                public int size() {
+                    return factories.size();
+                }
+            });
         }
     }
 
@@ -3066,8 +2706,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
         public Role create(Map<String, Object> context) {
             final String s = generator.asXml(context);
-            final Pair<RoleFactory, String> pair =
-                RolapSchema.this.createRole(s, NamePolicy.NAMELESS);
+            final Pair<RoleFactory, String> pair = RolapSchema.this.createRole(s, NamePolicy.NAMELESS);
             return pair.left.create(context);
         }
     }

@@ -452,6 +452,10 @@ public class RolapConnection extends ConnectionBase {
 
     private Result executeInternal(final Execution execution) {
         execution.setContextMap();
+
+        // set current schema
+        RolapSchemaProvider.setCurrentSchema(this.schema);
+
         final Statement statement = execution.getMondrianStatement();
         // Cleanup any previous executions still running
         synchronized (statement) {
