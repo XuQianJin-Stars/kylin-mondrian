@@ -3591,6 +3591,11 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
                 assigned to a key which is not explicitly named.
             </Doc>
         </Attribute>
+        <Attribute name="type" required="false">
+            <Doc>
+                Name of the referencing table.
+            </Doc>
+        </Attribute>
         <Attribute name="foreignKeyColumn">
             <Doc>
                 Name of the foreign key column in the referencing table.

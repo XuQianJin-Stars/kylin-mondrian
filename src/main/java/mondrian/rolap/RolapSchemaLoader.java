@@ -818,7 +818,7 @@ public class RolapSchemaLoader {
             }
             if (errorCount == 0) {
                 unresolvedLinkList.add(
-                    new UnresolvedLink(sourceKey, targetRelation, columnList));
+                    new UnresolvedLink(sourceKey, targetRelation, columnList, xmlLink.type));
             }
         }
 
@@ -842,6 +842,7 @@ public class RolapSchemaLoader {
                 unresolvedLink.sourceKey,
                 unresolvedLink.targetRelation,
                 unresolvedLink.columnList,
+                unresolvedLink.type,
                 false);
         }
 
@@ -5466,15 +5467,18 @@ public class RolapSchemaLoader {
         final RolapSchema.PhysKey sourceKey;
         final RolapSchema.PhysRelation targetRelation;
         final List<RolapSchema.PhysColumn> columnList;
+        final String type;
 
         public UnresolvedLink(
             RolapSchema.PhysKey sourceKey,
             RolapSchema.PhysRelation targetRelation,
-            List<RolapSchema.PhysColumn> columnList)
+            List<RolapSchema.PhysColumn> columnList,
+            String type)
         {
             this.sourceKey = sourceKey;
             this.targetRelation = targetRelation;
             this.columnList = columnList;
+            this.type = type;
         }
     }
 

@@ -905,9 +905,9 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * referenced
          * @return whether the link was added (per {@link Set#add(Object)})
          */
-        public boolean addLink(PhysKey sourceKey, PhysRelation targetRelation, List<PhysColumn> columnList,
+        public boolean addLink(PhysKey sourceKey, PhysRelation targetRelation, List<PhysColumn> columnList, String type,
                 boolean hard) {
-            final PhysLink physLink = new PhysLink(sourceKey, targetRelation, columnList);
+            final PhysLink physLink = new PhysLink(sourceKey, targetRelation, columnList, type);
             if (hard) {
                 List<PhysLink> list = hardLinksFrom.get(targetRelation);
                 if (list == null) {
@@ -1792,6 +1792,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
         public final PhysRelation targetRelation;
         final List<PhysColumn> columnList;
         public final String sql;
+        public final String type;
 
         /**
          * Creates a link from {@code targetTable} to {@code sourceTable} over
@@ -1801,10 +1802,11 @@ public class RolapSchema extends OlapElementBase implements Schema {
          * @param targetRelation Target table (contains foreign key)
          * @param columnList Foreign key columns in target table
          */
-        public PhysLink(PhysKey sourceKey, PhysRelation targetRelation, List<PhysColumn> columnList) {
+        public PhysLink(PhysKey sourceKey, PhysRelation targetRelation, List<PhysColumn> columnList, String type) {
             this.sourceKey = sourceKey;
             this.targetRelation = targetRelation;
             this.columnList = columnList;
+            this.type = type;
             assert columnList.size() == sourceKey.columnList.size() : columnList + " vs. " + sourceKey.columnList;
             for (PhysColumn column : columnList) {
                 assert column.relation == targetRelation : column.relation + "/" + targetRelation;
@@ -2299,7 +2301,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
         public PhysPathBuilder add(PhysKey sourceKey, List<PhysColumn> columnList) {
             final PhysHop prevHop = hopList.get(hopList.size() - 1);
-            add(new PhysLink(sourceKey, prevHop.relation, columnList), sourceKey.relation, true);
+            add(new PhysLink(sourceKey, prevHop.relation, columnList, "inner"), sourceKey.relation, true);
             return this;
         }
 
@@ -2314,7 +2316,7 @@ public class RolapSchema extends OlapElementBase implements Schema {
 
         public PhysPathBuilder prepend(PhysKey sourceKey, List<PhysColumn> columnList) {
             final PhysHop prevHop = hopList.get(0);
-            prepend(new PhysLink(sourceKey, prevHop.relation, columnList), sourceKey.relation, true);
+            prepend(new PhysLink(sourceKey, prevHop.relation, columnList, "inner"), sourceKey.relation, true);
             return this;
         }
 

@@ -506,11 +506,11 @@ public class SqlQuery {
         final String first = distinct ? "select distinct " : "select ";
         select.toBuffer(buf, generateFormattedSql, prefix, first, ", ", "", "");
         groupingFunctionsToBuffer(buf, prefix);
-        String fromSep =  " inner join ";
+        String fromSep = " inner join ";
         if (dialect.allowsJoinOn() && from.size() > 1) {
-//            if (joinCount <= 0) {
-//                throw new AssertionError();
-//            }
+            //            if (joinCount <= 0) {
+            //                throw new AssertionError();
+            //            }
         }
         // use default join clause
         FromClauseList fromClauseList = new FromClauseList(true);
@@ -540,7 +540,7 @@ public class SqlQuery {
         fromClauseList.add(generateJoinClauseStr(factTable, null));
         if (needJoinClouse) {
             // add join tables
-            DirectedGraph<RolapSchema.PhysRelation, RolapSchema.PhysLink> graph =  physSchema.getGraph().getGraph();
+            DirectedGraph<RolapSchema.PhysRelation, RolapSchema.PhysLink> graph = physSchema.getGraph().getGraph();
             Map<RolapSchema.PhysRelation, List<RolapSchema.PhysLink>> linkMap = graph.getLinksFrom();
             LinkedList<List<RolapSchema.PhysLink>> sortedLinks = new LinkedList<List<RolapSchema.PhysLink>>();
 
@@ -548,7 +548,8 @@ public class SqlQuery {
             for (Map.Entry<RolapSchema.PhysRelation, List<RolapSchema.PhysLink>> entry : linkMap.entrySet()) {
                 RolapSchema.PhysTable table = (RolapSchema.PhysTable) entry.getKey();
                 List<RolapSchema.PhysLink> links = entry.getValue();
-                if (table.getSchemaName().equals(factTable.getSchemaName()) && table.getName().equals(factTable.getName())) {
+                if (table.getSchemaName().equals(factTable.getSchemaName())
+                        && table.getName().equals(factTable.getName())) {
                     sortedLinks.addFirst(links);
                 } else {
                     sortedLinks.addLast(links);
@@ -557,6 +558,7 @@ public class SqlQuery {
             for (List<RolapSchema.PhysLink> links : sortedLinks) {
                 for (RolapSchema.PhysLink link : links) {
                     fromClauseList.add(generateJoinClauseStr((RolapSchema.PhysTable) link.getTo(), link));
+                    fromClauseList.seps.add(" " + link.type + " join ");
                 }
             }
         }
@@ -724,6 +726,8 @@ public class SqlQuery {
     static class ClauseList extends ArrayList<String> {
         protected final boolean allowDups;
 
+        public List<String> seps = new LinkedList<String>();
+
         ClauseList(final boolean allowDups) {
             this.allowDups = allowDups;
         }
@@ -773,13 +777,16 @@ public class SqlQuery {
         }
 
         final void toBuffer(final StringBuilder buf, final String first, final String sep, final String last) {
-            int n = 0;
             buf.append(first);
-            for (String s : this) {
-                if (n++ > 0) {
-                    buf.append(sep);
+            for (int n = 0; n < this.size(); n++) {
+                if (n > 0) {
+                    if (this.seps.size() > 0 && this.size() == this.seps.size() + 1) {
+                        buf.append(this.seps.get(n - 1));
+                    } else {
+                        buf.append(sep);
+                    }
                 }
-                buf.append(s);
+                buf.append(this.get(n));
             }
             buf.append(last);
         }
