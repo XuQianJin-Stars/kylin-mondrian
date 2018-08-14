@@ -24,7 +24,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import javax.sql.DataSource;
+import javax.sql.RowSet;
+import javax.sql.rowset.CachedRowSet;
 
+import com.sun.rowset.CachedRowSetImpl;
+import mondrian.rolap.cache.FixedCachedRowSetImpl;
 import mondrian.util.CopyUtils;
 import org.apache.log4j.Logger;
 
@@ -141,7 +145,6 @@ public class SqlStatement implements DBStatement {
         Counters.SQL_STATEMENT_EXECUTING_IDS.add(id);
         String status = "failed";
         Statement statement = null;
-        boolean useCache = false;
 
         try {
             // Check execution state
@@ -199,12 +202,19 @@ public class SqlStatement implements DBStatement {
 
             ResultSet cachedResultSet = QEURY_CACHE.getIfPresent(sql);
             if (cachedResultSet != null) {
-                this.resultSet = CopyUtils.deepCopy(cachedResultSet);
-                useCache = true;
+                CachedRowSet rowSet = new FixedCachedRowSetImpl();
+                rowSet.populate(CopyUtils.deepCopy(cachedResultSet));
+                this.resultSet = rowSet;
+
             } else {
                 this.resultSet = statement.executeQuery(sql);
-                ResultSet copyResult = CopyUtils.deepCopy(this.resultSet);
-                QEURY_CACHE.put(sql, copyResult);
+                CachedRowSet rowSet = new FixedCachedRowSetImpl();
+                rowSet.populate(this.resultSet);
+                ResultSet copyResult1 = CopyUtils.deepCopy(rowSet);
+                ResultSet copyResult2 = CopyUtils.deepCopy(copyResult1);
+                QEURY_CACHE.put(sql, copyResult1);
+                this.resultSet.close();
+                this.resultSet = copyResult2;
             }
             // skip to first row specified in request
             this.state = State.ACTIVE;
@@ -261,11 +271,7 @@ public class SqlStatement implements DBStatement {
             RolapUtil.SQL_LOGGER.debug(id + ": " + status);
 
             if (RolapUtil.LOGGER.isDebugEnabled()) {
-                if (useCache) {
-                    RolapUtil.LOGGER.debug(locus.component + ": use cache, sql [" + sql + "]");
-                } else {
-                    RolapUtil.LOGGER.debug(locus.component + ": executing sql [" + sql + "]" + status);
-                }
+                RolapUtil.LOGGER.debug(locus.component + ": executing sql [" + sql + "]" + status);
             }
         }
     }
@@ -298,9 +304,8 @@ public class SqlStatement implements DBStatement {
         // statements. But let's be conservative and close everything
         // explicitly.
         SQLException ex = Util.close(resultSet, null, jdbcConnection);
-        resultSet = null;
         jdbcConnection = null;
-
+        resultSet = null;
         if (ex != null) {
             throw Util.newError(ex, locus.message + "; sql=[" + sql + "]");
         }

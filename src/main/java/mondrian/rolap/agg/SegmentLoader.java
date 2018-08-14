@@ -10,26 +10,47 @@
 */
 package mondrian.rolap.agg;
 
-import mondrian.olap.MondrianException;
-import mondrian.olap.MondrianProperties;
-import mondrian.olap.Util;
-import mondrian.resource.MondrianResource;
-import mondrian.rolap.*;
-import mondrian.rolap.agg.SegmentCacheManager.AbortException;
-import mondrian.rolap.cache.SegmentCacheIndex;
-import mondrian.server.Locus;
-import mondrian.server.monitor.SqlStatementEvent;
-import mondrian.spi.*;
-import mondrian.util.*;
-
-import org.apache.log4j.Logger;
-
 import java.io.Serializable;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.AbstractList;
+import java.util.ArrayList;
+import java.util.BitSet;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.SortedSet;
+import java.util.TreeSet;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.log4j.Logger;
+
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
+
+import mondrian.olap.MondrianException;
+import mondrian.olap.MondrianProperties;
+import mondrian.olap.Util;
+import mondrian.resource.MondrianResource;
+import mondrian.rolap.BitKey;
+import mondrian.rolap.RolapSchemaProvider;
+import mondrian.rolap.RolapStar;
+import mondrian.rolap.RolapUtil;
+import mondrian.rolap.SqlStatement;
+import mondrian.rolap.StarPredicate;
+import mondrian.rolap.agg.SegmentCacheManager.AbortException;
+import mondrian.rolap.cache.SegmentCacheIndex;
+import mondrian.server.Locus;
+import mondrian.server.monitor.SqlStatementEvent;
+import mondrian.spi.SegmentBody;
+import mondrian.spi.SegmentColumn;
+import mondrian.spi.SegmentHeader;
+import mondrian.util.Pair;
 
 /**
  * <p>The <code>SegmentLoader</code> queries database and loads the data into
@@ -62,6 +83,9 @@ public class SegmentLoader {
     public SegmentLoader(SegmentCacheManager cacheMgr) {
         this.cacheMgr = cacheMgr;
     }
+
+    private static Cache<String, Map<Segment, SegmentWithData>> SEGMENT_CACHE = CacheBuilder.newBuilder()
+            .expireAfterWrite(5, TimeUnit.MINUTES).maximumSize(1000).build();
 
     /**
      * Loads data for all the segments of the GroupingSets. If the grouping sets
@@ -97,62 +121,37 @@ public class SegmentLoader {
      *                       a list of the segments it has loaded, when it
      *                       completes
      */
-    public void load(
-        int cellRequestCount,
-        List<GroupingSet> groupingSets,
-        List<StarPredicate> compoundPredicateList,
-        List<Future<Map<Segment, SegmentWithData>>> segmentFutures)
-    {
+    public void load(int cellRequestCount, List<GroupingSet> groupingSets, List<StarPredicate> compoundPredicateList,
+            List<Future<Map<Segment, SegmentWithData>>> segmentFutures) {
         if (!MondrianProperties.instance().DisableCaching.get()) {
             for (GroupingSet groupingSet : groupingSets) {
                 for (Segment segment : groupingSet.getSegments()) {
-                    final SegmentCacheIndex index =
-                        cacheMgr.getIndexRegistry().getIndex(segment.star);
-                    index.add(
-                        segment.getHeader(),
-                        new SegmentBuilder.StarSegmentConverter(
-                            segment.measure,
-                            compoundPredicateList),
-                        true);
+                    final SegmentCacheIndex index = cacheMgr.getIndexRegistry().getIndex(segment.star);
+                    index.add(segment.getHeader(),
+                            new SegmentBuilder.StarSegmentConverter(segment.measure, compoundPredicateList), true);
                     // Make sure that we are registered as a client of
                     // the segment by invoking getFuture.
-                    Util.discard(
-                        index.getFuture(
-                            Locus.peek().execution,
-                            segment.getHeader()));
+                    Util.discard(index.getFuture(Locus.peek().execution, segment.getHeader()));
                 }
             }
         }
         try {
-            segmentFutures.add(
-                cacheMgr.sqlExecutor.submit(
-                    new SegmentLoadCommand(
-                        Locus.peek(),
-                        this,
-                        cellRequestCount,
-                        groupingSets,
-                        compoundPredicateList)));
+            segmentFutures.add(cacheMgr.sqlExecutor.submit(
+                    new SegmentLoadCommand(Locus.peek(), this, cellRequestCount, groupingSets, compoundPredicateList)));
         } catch (Exception e) {
             throw new MondrianException(e);
         }
     }
 
-    private static class SegmentLoadCommand
-        implements Callable<Map<Segment, SegmentWithData>>
-    {
+    private static class SegmentLoadCommand implements Callable<Map<Segment, SegmentWithData>> {
         private final Locus locus;
         private final SegmentLoader segmentLoader;
         private final int cellRequestCount;
         private final List<GroupingSet> groupingSets;
         private final List<StarPredicate> compoundPredicateList;
 
-        public SegmentLoadCommand(
-            Locus locus,
-            SegmentLoader segmentLoader,
-            int cellRequestCount,
-            List<GroupingSet> groupingSets,
-            List<StarPredicate> compoundPredicateList)
-        {
+        public SegmentLoadCommand(Locus locus, SegmentLoader segmentLoader, int cellRequestCount,
+                List<GroupingSet> groupingSets, List<StarPredicate> compoundPredicateList) {
             this.locus = locus;
             this.segmentLoader = segmentLoader;
             this.cellRequestCount = cellRequestCount;
@@ -163,39 +162,37 @@ public class SegmentLoader {
         public Map<Segment, SegmentWithData> call() throws Exception {
             Locus.push(locus);
             try {
-                return segmentLoader.loadImpl(
-                    cellRequestCount,
-                    groupingSets,
-                    compoundPredicateList);
+                return segmentLoader.loadImpl(cellRequestCount, groupingSets, compoundPredicateList);
             } finally {
                 Locus.pop(locus);
             }
         }
     }
 
-    protected Map<Segment, SegmentWithData> loadImpl(
-        int cellRequestCount,
-        List<GroupingSet> groupingSets,
-        List<StarPredicate> compoundPredicateList)
-    {
+    protected Map<Segment, SegmentWithData> loadImpl(int cellRequestCount, List<GroupingSet> groupingSets,
+            List<StarPredicate> compoundPredicateList) {
         SqlStatement stmt = null;
-        GroupingSetsList groupingSetsList =
-            new GroupingSetsList(groupingSets);
-        RolapStar.Column[] defaultColumns =
-            groupingSetsList.getDefaultColumns();
+        GroupingSetsList groupingSetsList = new GroupingSetsList(groupingSets);
+        RolapStar.Column[] defaultColumns = groupingSetsList.getDefaultColumns();
 
-        final Map<Segment, SegmentWithData> segmentMap =
-            new HashMap<Segment, SegmentWithData>();
+        final Map<Segment, SegmentWithData> segmentMap = new HashMap<Segment, SegmentWithData>();
         Throwable throwable = null;
         try {
             int arity = defaultColumns.length;
-            SortedSet<Comparable>[] axisValueSets =
-                getDistinctValueWorkspace(arity);
+            SortedSet<Comparable>[] axisValueSets = getDistinctValueWorkspace(arity);
 
-            stmt = createExecuteSql(
-                cellRequestCount,
-                groupingSetsList,
-                compoundPredicateList);
+            RolapStar star = groupingSetsList.getStar();
+            // set current schema
+            RolapSchemaProvider.setCurrentSchema(star.getSchema());
+            Pair<String, List<SqlStatement.Type>> pair = AggregationManager.generateSql(groupingSetsList,
+                    compoundPredicateList);
+
+            Map<Segment, SegmentWithData> cachedSegment = SEGMENT_CACHE.getIfPresent(pair.left);
+            if (cachedSegment != null) {
+                return cachedSegment;
+            }
+
+            stmt = createExecuteSql(cellRequestCount, groupingSetsList, compoundPredicateList);
 
             if (stmt == null) {
                 // Nothing to do. We're done here.
@@ -204,36 +201,18 @@ public class SegmentLoader {
 
             boolean[] axisContainsNull = new boolean[arity];
 
-            RowList rows =
-                processData(
-                    stmt,
-                    axisContainsNull,
-                    axisValueSets,
-                    groupingSetsList);
+            RowList rows = processData(stmt, axisContainsNull, axisValueSets, groupingSetsList);
 
-            boolean sparse =
-                setAxisDataAndDecideSparseUse(
-                    axisValueSets,
-                    axisContainsNull,
-                    groupingSetsList,
-                    rows);
+            boolean sparse = setAxisDataAndDecideSparseUse(axisValueSets, axisContainsNull, groupingSetsList, rows);
 
-            final Map<BitKey, GroupingSetsList.Cohort> groupingDataSetsMap =
-                createDataSetsForGroupingSets(
-                    groupingSetsList,
-                    sparse,
-                    rows.getTypes().subList(
-                        arity, rows.getTypes().size()));
+            final Map<BitKey, GroupingSetsList.Cohort> groupingDataSetsMap = createDataSetsForGroupingSets(
+                    groupingSetsList, sparse, rows.getTypes().subList(arity, rows.getTypes().size()));
 
-            loadDataToDataSets(
-                groupingSetsList, rows, groupingDataSetsMap);
+            loadDataToDataSets(groupingSetsList, rows, groupingDataSetsMap);
 
-            setDataToSegments(
-                this.cacheMgr,
-                groupingSetsList,
-                groupingDataSetsMap,
-                segmentMap);
+            setDataToSegments(this.cacheMgr, groupingSetsList, groupingDataSetsMap, segmentMap);
 
+            SEGMENT_CACHE.put(pair.left, segmentMap);
             return segmentMap;
         } catch (Throwable e) {
             throwable = e;
@@ -245,11 +224,7 @@ public class SegmentLoader {
             if (stmt != null) {
                 stmt.close();
             }
-            setFailOnStillLoadingSegments(
-                this.cacheMgr,
-                segmentMap,
-                groupingSetsList,
-                throwable);
+            setFailOnStillLoadingSegments(this.cacheMgr, segmentMap, groupingSetsList, throwable);
         }
     }
 
@@ -260,12 +235,8 @@ public class SegmentLoader {
      * @param header Segment header
      * @param body Segment body
      */
-    private static void cacheSegment(
-        SegmentCacheManager cacheMgr,
-        RolapStar star,
-        SegmentHeader header,
-        SegmentBody body)
-    {
+    private static void cacheSegment(SegmentCacheManager cacheMgr, RolapStar star, SegmentHeader header,
+            SegmentBody body) {
         // Write the segment into external cache.
         //
         // It would be a mistake to do this from the cacheMgr -- because the
@@ -281,25 +252,17 @@ public class SegmentLoader {
         }
     }
 
-    public static boolean setFailOnStillLoadingSegments(
-        SegmentCacheManager cacheMgr,
-        Map<Segment, SegmentWithData> segmentMap,
-        GroupingSetsList groupingSetsList,
-        Throwable throwable)
-    {
+    public static boolean setFailOnStillLoadingSegments(SegmentCacheManager cacheMgr,
+            Map<Segment, SegmentWithData> segmentMap, GroupingSetsList groupingSetsList, Throwable throwable) {
         int n = 0;
         for (GroupingSet groupingSet : groupingSetsList.getGroupingSets()) {
             for (Segment segment : groupingSet.getSegments()) {
                 if (!segmentMap.containsKey(segment)) {
                     if (throwable == null) {
-                        throwable =
-                            new RuntimeException("Segment failed to load");
+                        throwable = new RuntimeException("Segment failed to load");
                     }
                     final SegmentHeader header = segment.getHeader();
-                    cacheMgr.loadFailed(
-                        segment.star,
-                        header,
-                        throwable);
+                    cacheMgr.loadFailed(segment.star, header, throwable);
                     ++n;
                 }
             }
@@ -313,11 +276,8 @@ public class SegmentLoader {
      * the row data. If grouping sets is not used, data is loaded on to
      * nonGroupingDataSets.
      */
-    public static void loadDataToDataSets(
-        GroupingSetsList groupingSetsList,
-        RowList rows,
-        Map<BitKey, GroupingSetsList.Cohort> groupingDataSetMap)
-    {
+    public static void loadDataToDataSets(GroupingSetsList groupingSetsList, RowList rows,
+            Map<BitKey, GroupingSetsList.Cohort> groupingDataSetMap) {
         int arity = groupingSetsList.getDefaultColumns().length;
         SegmentAxis[] axes = groupingSetsList.getDefaultAxes();
         int segmentLength = groupingSetsList.getDefaultSegments().size();
@@ -328,9 +288,7 @@ public class SegmentLoader {
             final BitKey groupingBitKey;
             final GroupingSetsList.Cohort cohort;
             if (useGroupingSet) {
-                groupingBitKey =
-                    (BitKey) rows.getObject(
-                        groupingSetsList.getGroupingBitKeyIndex());
+                groupingBitKey = (BitKey) rows.getObject(groupingSetsList.getGroupingBitKeyIndex());
                 cohort = groupingDataSetMap.get(groupingBitKey);
             } else {
                 groupingBitKey = null;
@@ -347,11 +305,8 @@ public class SegmentLoader {
                 case LONG:
                 case DOUBLE:
                     Object o = rows.getObject(j);
-                    if (useGroupingSet
-                        && (o == null || o == RolapUtil.sqlNullValue)
-                        && groupingBitKey.get(
-                            groupingSetsList.findGroupingFunctionIndex(j)))
-                    {
+                    if (useGroupingSet && (o == null || o == RolapUtil.sqlNullValue)
+                            && groupingBitKey.get(groupingSetsList.findGroupingFunctionIndex(j))) {
                         continue;
                     }
                     SegmentAxis axis = axes[j];
@@ -370,18 +325,13 @@ public class SegmentLoader {
             }
 
             for (int j = 0; j < segmentLength; j++) {
-                cohort.segmentDatasetList.get(j).populateFrom(
-                    pos, rows, arity + j);
+                cohort.segmentDatasetList.get(j).populateFrom(pos, rows, arity + j);
             }
         }
     }
 
-    public boolean setAxisDataAndDecideSparseUse(
-        SortedSet<Comparable>[] axisValueSets,
-        boolean[] axisContainsNull,
-        GroupingSetsList groupingSetsList,
-        RowList rows)
-    {
+    public boolean setAxisDataAndDecideSparseUse(SortedSet<Comparable>[] axisValueSets, boolean[] axisContainsNull,
+            GroupingSetsList groupingSetsList, RowList rows) {
         SegmentAxis[] axes = groupingSetsList.getDefaultAxes();
         RolapStar.Column[] allColumns = groupingSetsList.getDefaultColumns();
         // Figure out size of dense array, and allocate it, or use a sparse
@@ -390,17 +340,9 @@ public class SegmentLoader {
         int n = 1;
         for (int i = 0; i < axes.length; i++) {
             SortedSet<Comparable> valueSet = axisValueSets[i];
-            axes[i] =
-                new SegmentAxis(
-                    groupingSetsList.getDefaultPredicates()[i],
-                    valueSet,
-                    axisContainsNull[i]);
+            axes[i] = new SegmentAxis(groupingSetsList.getDefaultPredicates()[i], valueSet, axisContainsNull[i]);
             int size = axes[i].getKeys().length;
-            setAxisDataToGroupableList(
-                groupingSetsList,
-                valueSet,
-                axisContainsNull[i],
-                allColumns[i]);
+            setAxisDataToGroupableList(groupingSetsList, valueSet, axisContainsNull[i], allColumns[i]);
             int previous = n;
             n *= size;
             if ((n < previous) || (n < size)) {
@@ -417,41 +359,24 @@ public class SegmentLoader {
         return sparse;
     }
 
-    public static void setDataToSegments(
-        SegmentCacheManager cacheMgr,
-        GroupingSetsList groupingSetsList,
-        Map<BitKey, GroupingSetsList.Cohort> datasetsMap,
-        Map<Segment, SegmentWithData> segmentSlotMap)
-    {
+    public static void setDataToSegments(SegmentCacheManager cacheMgr, GroupingSetsList groupingSetsList,
+            Map<BitKey, GroupingSetsList.Cohort> datasetsMap, Map<Segment, SegmentWithData> segmentSlotMap) {
         List<GroupingSet> groupingSets = groupingSetsList.getGroupingSets();
         for (int i = 0; i < groupingSets.size(); i++) {
             List<Segment> segments = groupingSets.get(i).getSegments();
-            GroupingSetsList.Cohort cohort =
-                datasetsMap.get(
-                    groupingSetsList.getRollupColumnsBitKeyList().get(i));
+            GroupingSetsList.Cohort cohort = datasetsMap.get(groupingSetsList.getRollupColumnsBitKeyList().get(i));
             for (int j = 0; j < segments.size(); j++) {
                 Segment segment = segments.get(j);
-                final SegmentDataset segmentDataset =
-                    cohort.segmentDatasetList.get(j);
-                final SegmentWithData segmentWithData =
-                    new SegmentWithData(
-                        segment,
-                        segmentDataset,
-                        cohort.axes);
+                final SegmentDataset segmentDataset = cohort.segmentDatasetList.get(j);
+                final SegmentWithData segmentWithData = new SegmentWithData(segment, segmentDataset, cohort.axes);
 
                 segmentSlotMap.put(segment, segmentWithData);
 
                 final SegmentHeader header = segmentWithData.getHeader();
-                final SegmentBody body =
-                    segmentWithData.getData().createSegmentBody(
-                        new AbstractList<
-                            Pair<SortedSet<Comparable>, Boolean>>()
-                        {
-                            public Pair<SortedSet<Comparable>, Boolean> get(
-                                int index)
-                            {
-                                return segmentWithData.axes[index]
-                                    .getValuesAndIndicator();
+                final SegmentBody body = segmentWithData.getData()
+                        .createSegmentBody(new AbstractList<Pair<SortedSet<Comparable>, Boolean>>() {
+                            public Pair<SortedSet<Comparable>, Boolean> get(int index) {
+                                return segmentWithData.axes[index].getValuesAndIndicator();
                             }
 
                             public int size() {
@@ -466,32 +391,19 @@ public class SegmentLoader {
         }
     }
 
-    public static Map<BitKey, GroupingSetsList.Cohort>
-    createDataSetsForGroupingSets(
-        GroupingSetsList groupingSetsList,
-        boolean sparse,
-        List<SqlStatement.Type> types)
-    {
+    public static Map<BitKey, GroupingSetsList.Cohort> createDataSetsForGroupingSets(GroupingSetsList groupingSetsList,
+            boolean sparse, List<SqlStatement.Type> types) {
         if (!groupingSetsList.useGroupingSets()) {
-            final GroupingSetsList.Cohort datasets = createDataSets(
-                sparse,
-                groupingSetsList.getDefaultSegments(),
-                groupingSetsList.getDefaultAxes(),
-                types);
+            final GroupingSetsList.Cohort datasets = createDataSets(sparse, groupingSetsList.getDefaultSegments(),
+                    groupingSetsList.getDefaultAxes(), types);
             return Collections.singletonMap(BitKey.EMPTY, datasets);
         }
-        Map<BitKey, GroupingSetsList.Cohort> datasetsMap =
-            new HashMap<BitKey, GroupingSetsList.Cohort>();
+        Map<BitKey, GroupingSetsList.Cohort> datasetsMap = new HashMap<BitKey, GroupingSetsList.Cohort>();
         List<GroupingSet> groupingSets = groupingSetsList.getGroupingSets();
-        List<BitKey> groupingColumnsBitKeyList =
-            groupingSetsList.getRollupColumnsBitKeyList();
+        List<BitKey> groupingColumnsBitKeyList = groupingSetsList.getRollupColumnsBitKeyList();
         for (int i = 0; i < groupingSets.size(); i++) {
             GroupingSet groupingSet = groupingSets.get(i);
-            GroupingSetsList.Cohort cohort =
-                createDataSets(
-                    sparse,
-                    groupingSet.getSegments(),
-                    groupingSet.getAxes(),
+            GroupingSetsList.Cohort cohort = createDataSets(sparse, groupingSet.getSegments(), groupingSet.getAxes(),
                     types);
             datasetsMap.put(groupingColumnsBitKeyList.get(i), cohort);
         }
@@ -506,14 +418,9 @@ public class SegmentLoader {
         return n;
     }
 
-    public static GroupingSetsList.Cohort createDataSets(
-        boolean sparse,
-        List<Segment> segments,
-        SegmentAxis[] axes,
-        List<SqlStatement.Type> types)
-    {
-        final List<SegmentDataset> datasets =
-            new ArrayList<SegmentDataset>(segments.size());
+    public static GroupingSetsList.Cohort createDataSets(boolean sparse, List<Segment> segments, SegmentAxis[] axes,
+            List<SqlStatement.Type> types) {
+        final List<SegmentDataset> datasets = new ArrayList<SegmentDataset>(segments.size());
         final int n;
         if (sparse) {
             n = 0;
@@ -527,22 +434,13 @@ public class SegmentLoader {
         return new GroupingSetsList.Cohort(datasets, axes);
     }
 
-    public static void setAxisDataToGroupableList(
-        GroupingSetsList groupingSetsList,
-        SortedSet<Comparable> valueSet,
-        boolean axisContainsNull,
-        RolapStar.Column column)
-    {
-        for (GroupingSet groupingSet
-            : groupingSetsList.getRollupGroupingSets())
-        {
+    public static void setAxisDataToGroupableList(GroupingSetsList groupingSetsList, SortedSet<Comparable> valueSet,
+            boolean axisContainsNull, RolapStar.Column column) {
+        for (GroupingSet groupingSet : groupingSetsList.getRollupGroupingSets()) {
             RolapStar.Column[] columns = groupingSet.getColumns();
             for (int i = 0; i < columns.length; i++) {
                 if (columns[i].equals(column)) {
-                    groupingSet.getAxes()[i] =
-                        new SegmentAxis(
-                            groupingSet.getPredicates()[i],
-                            valueSet,
+                    groupingSet.getAxes()[i] = new SegmentAxis(groupingSet.getPredicates()[i], valueSet,
                             axisContainsNull);
                 }
             }
@@ -560,110 +458,78 @@ public class SegmentLoader {
      * @param compoundPredicateList Compound predicate list
      * @return An executed SQL statement, or null
      */
-    SqlStatement createExecuteSql(
-        int cellRequestCount,
-        final GroupingSetsList groupingSetsList,
-        List<StarPredicate> compoundPredicateList)
-    {
+    SqlStatement createExecuteSql(int cellRequestCount, final GroupingSetsList groupingSetsList,
+            List<StarPredicate> compoundPredicateList) {
         RolapStar star = groupingSetsList.getStar();
         // set current schema
         RolapSchemaProvider.setCurrentSchema(star.getSchema());
 
-        Pair<String, List<SqlStatement.Type>> pair =
-            AggregationManager.generateSql(
-                groupingSetsList, compoundPredicateList);
-        final Locus locus =
-            new SqlStatement.StatementLocus(
-                Locus.peek().execution,
-                "Segment.load",
-                "Error while loading segment",
-                SqlStatementEvent.Purpose.CELL_SEGMENT,
-                cellRequestCount);
+        Pair<String, List<SqlStatement.Type>> pair = AggregationManager.generateSql(groupingSetsList,
+                compoundPredicateList);
+        final Locus locus = new SqlStatement.StatementLocus(Locus.peek().execution, "Segment.load",
+                "Error while loading segment", SqlStatementEvent.Purpose.CELL_SEGMENT, cellRequestCount);
 
         // When caching is enabled, we must register the SQL statement
         // in the index. We don't want to cancel SQL statements that are shared
         // across threads unless it is safe.
-        final Util.Function1<Statement, Void> callbackWithCaching =
-            new Util.Function1<Statement, Void>() {
-                public Void apply(final Statement stmt) {
-                    cacheMgr.execute(
-                        new SegmentCacheManager.Command<Void>() {
-                            public Void call() throws Exception {
-                                boolean atLeastOneActive = false;
-                                for (Segment seg
-                                    : groupingSetsList.getDefaultSegments())
-                                {
-                                    final SegmentCacheIndex index =
-                                        cacheMgr.getIndexRegistry()
-                                            .getIndex(seg.star);
-                                    // Make sure to check if the segment still
-                                    // exists in the index. It could have been
-                                    // removed by a cancellation request since
-                                    // then.
-                                    if (index.contains(seg.getHeader())) {
-                                        index.linkSqlStatement(
-                                            seg.getHeader(), stmt);
-                                        atLeastOneActive = true;
-                                    }
-                                    if (!atLeastOneActive) {
-                                        // There are no segments to load.
-                                        // Throw this so that the segment thread
-                                        // knows to stop.
-                                        throw new AbortException();
-                                    }
-                                }
-                                return null;
+        final Util.Function1<Statement, Void> callbackWithCaching = new Util.Function1<Statement, Void>() {
+            public Void apply(final Statement stmt) {
+                cacheMgr.execute(new SegmentCacheManager.Command<Void>() {
+                    public Void call() throws Exception {
+                        boolean atLeastOneActive = false;
+                        for (Segment seg : groupingSetsList.getDefaultSegments()) {
+                            final SegmentCacheIndex index = cacheMgr.getIndexRegistry().getIndex(seg.star);
+                            // Make sure to check if the segment still
+                            // exists in the index. It could have been
+                            // removed by a cancellation request since
+                            // then.
+                            if (index.contains(seg.getHeader())) {
+                                index.linkSqlStatement(seg.getHeader(), stmt);
+                                atLeastOneActive = true;
                             }
-                            public Locus getLocus() {
-                              return locus;
+                            if (!atLeastOneActive) {
+                                // There are no segments to load.
+                                // Throw this so that the segment thread
+                                // knows to stop.
+                                throw new AbortException();
                             }
-                        });
-                    return null;
-                }
+                        }
+                        return null;
+                    }
+
+                    public Locus getLocus() {
+                        return locus;
+                    }
+                });
+                return null;
+            }
         };
 
         // When using no cache, we register the SQL statement directly
         // with the execution instance for cleanup.
-        final Util.Function1<Statement, Void> callbackNoCaching =
-                new Util.Function1<Statement, Void>() {
-                    public Void apply(final Statement stmt) {
-                        locus.execution.registerStatement(locus, stmt);
-                        return null;
-                    }
-            };
+        final Util.Function1<Statement, Void> callbackNoCaching = new Util.Function1<Statement, Void>() {
+            public Void apply(final Statement stmt) {
+                locus.execution.registerStatement(locus, stmt);
+                return null;
+            }
+        };
 
         try {
-            return RolapUtil.executeQuery(
-                star.getDataSource(),
-                pair.left,
-                pair.right,
-                0,
-                0,
-                locus,
-                -1,
-                -1,
-                // Only one of the two callbacks are required, depending if we
-                // cache the segments or not.
-                MondrianProperties.instance().DisableCaching.get()
-                    ? callbackNoCaching
-                    : callbackWithCaching);
+            return RolapUtil.executeQuery(star.getDataSource(), pair.left, pair.right, 0, 0, locus, -1, -1,
+                    // Only one of the two callbacks are required, depending if we
+                    // cache the segments or not.
+                    MondrianProperties.instance().DisableCaching.get() ? callbackNoCaching : callbackWithCaching);
         } catch (Throwable t) {
             if (Util.getMatchingCause(t, AbortException.class) != null) {
                 return null;
             } else {
-                throw new MondrianException(
-                    "Failed to load segment form SQL",
-                    t);
+                throw new MondrianException("Failed to load segment form SQL", t);
             }
         }
     }
 
-    RowList processData(
-        SqlStatement stmt,
-        final boolean[] axisContainsNull,
-        final SortedSet<Comparable>[] axisValueSets,
-        final GroupingSetsList groupingSetsList) throws SQLException
-    {
+    RowList processData(SqlStatement stmt, final boolean[] axisContainsNull,
+            final SortedSet<Comparable>[] axisValueSets, final GroupingSetsList groupingSetsList) throws SQLException {
         List<Segment> segments = groupingSetsList.getDefaultSegments();
         int measureCount = segments.size();
         ResultSet rawRows = loadData(stmt, groupingSetsList);
@@ -677,9 +543,7 @@ public class SegmentLoader {
         // the processed data set.
         final List<SqlStatement.Type> processedTypes;
         if (groupingSetsList.useGroupingSets()) {
-            processedTypes =
-                new ArrayList<SqlStatement.Type>(
-                    types.subList(0, groupingColumnStartIndex));
+            processedTypes = new ArrayList<SqlStatement.Type>(types.subList(0, groupingColumnStartIndex));
             processedTypes.add(SqlStatement.Type.OBJECT);
         } else {
             processedTypes = types;
@@ -692,9 +556,7 @@ public class SegmentLoader {
 
             // get the columns
             int columnIndex = 0;
-            for (int axisIndex = 0; axisIndex < arity;
-                 axisIndex++, columnIndex++)
-            {
+            for (int axisIndex = 0; axisIndex < arity; axisIndex++, columnIndex++) {
                 final SqlStatement.Type type = types.get(columnIndex);
                 switch (type) {
                 case OBJECT:
@@ -703,12 +565,7 @@ public class SegmentLoader {
                     if (o == null) {
                         o = RolapUtil.sqlNullValue;
                         if (!groupingSetsList.useGroupingSets()
-                            || !isAggregateNull(
-                                rawRows,
-                                groupingColumnStartIndex,
-                                groupingSetsList,
-                                axisIndex))
-                        {
+                                || !isAggregateNull(rawRows, groupingColumnStartIndex, groupingSetsList, axisIndex)) {
                             axisContainsNull[axisIndex] = true;
                         }
                     } else {
@@ -723,12 +580,7 @@ public class SegmentLoader {
                     final int intValue = rawRows.getInt(columnIndex + 1);
                     if (intValue == 0 && rawRows.wasNull()) {
                         if (!groupingSetsList.useGroupingSets()
-                            || !isAggregateNull(
-                                rawRows,
-                                groupingColumnStartIndex,
-                                groupingSetsList,
-                                axisIndex))
-                        {
+                                || !isAggregateNull(rawRows, groupingColumnStartIndex, groupingSetsList, axisIndex)) {
                             axisContainsNull[axisIndex] = true;
                         }
                         processedRows.setNull(columnIndex, true);
@@ -741,12 +593,7 @@ public class SegmentLoader {
                     final long longValue = rawRows.getLong(columnIndex + 1);
                     if (longValue == 0 && rawRows.wasNull()) {
                         if (!groupingSetsList.useGroupingSets()
-                            || !isAggregateNull(
-                                rawRows,
-                                groupingColumnStartIndex,
-                                groupingSetsList,
-                                axisIndex))
-                        {
+                                || !isAggregateNull(rawRows, groupingColumnStartIndex, groupingSetsList, axisIndex)) {
                             axisContainsNull[axisIndex] = true;
                         }
                         processedRows.setNull(columnIndex, true);
@@ -756,16 +603,10 @@ public class SegmentLoader {
                     }
                     break;
                 case DOUBLE:
-                    final double doubleValue =
-                        rawRows.getDouble(columnIndex + 1);
+                    final double doubleValue = rawRows.getDouble(columnIndex + 1);
                     if (doubleValue == 0 && rawRows.wasNull()) {
                         if (!groupingSetsList.useGroupingSets()
-                            || !isAggregateNull(
-                                rawRows,
-                                groupingColumnStartIndex,
-                                groupingSetsList,
-                                axisIndex))
-                        {
+                                || !isAggregateNull(rawRows, groupingColumnStartIndex, groupingSetsList, axisIndex)) {
                             axisContainsNull[axisIndex] = true;
                         }
                     }
@@ -786,8 +627,7 @@ public class SegmentLoader {
 
             // get the measure
             for (int i = 0; i < measureCount; i++, columnIndex++) {
-                final SqlStatement.Type type =
-                    types.get(columnIndex);
+                final SqlStatement.Type type = types.get(columnIndex);
                 switch (type) {
                 case OBJECT:
                 case STRING:
@@ -824,8 +664,7 @@ public class SegmentLoader {
                     }
                     break;
                 case DOUBLE:
-                    final double doubleValue =
-                        rawRows.getDouble(columnIndex + 1);
+                    final double doubleValue = rawRows.getDouble(columnIndex + 1);
                     processedRows.setDouble(columnIndex, doubleValue);
                     if (doubleValue == 0 && rawRows.wasNull()) {
                         processedRows.setNull(columnIndex, true);
@@ -837,31 +676,24 @@ public class SegmentLoader {
             }
 
             if (groupingSetsList.useGroupingSets()) {
-                processedRows.setObject(
-                    columnIndex,
-                    getRollupBitKey(
-                        groupingSetsList.getRollupColumns().size(),
-                        rawRows, columnIndex));
+                processedRows.setObject(columnIndex,
+                        getRollupBitKey(groupingSetsList.getRollupColumns().size(), rawRows, columnIndex));
             }
         }
         return processedRows;
     }
 
     protected static void checkResultLimit(int currentCount) {
-        final int limit =
-            MondrianProperties.instance().ResultLimit.get();
+        final int limit = MondrianProperties.instance().ResultLimit.get();
         if (limit > 0 && currentCount > limit) {
-            throw MondrianResource.instance()
-                .SegmentFetchLimitExceeded.ex(limit);
+            throw MondrianResource.instance().SegmentFetchLimitExceeded.ex(limit);
         }
     }
 
     /**
      * Generates bit key representing roll up columns
      */
-    BitKey getRollupBitKey(int arity, ResultSet rowList, int k)
-        throws SQLException
-    {
+    BitKey getRollupBitKey(int arity, ResultSet rowList, int k) throws SQLException {
         BitKey groupingBitKey = BitKey.Factory.makeBitKey(arity);
         for (int i = 0; i < arity; i++) {
             int o = rowList.getInt(k + i + 1);
@@ -872,27 +704,17 @@ public class SegmentLoader {
         return groupingBitKey;
     }
 
-    private boolean isAggregateNull(
-        ResultSet rowList,
-        int groupingColumnStartIndex,
-        GroupingSetsList groupingSetsList,
-        int axisIndex) throws SQLException
-    {
-        int groupingFunctionIndex =
-            groupingSetsList.findGroupingFunctionIndex(axisIndex);
+    private boolean isAggregateNull(ResultSet rowList, int groupingColumnStartIndex, GroupingSetsList groupingSetsList,
+            int axisIndex) throws SQLException {
+        int groupingFunctionIndex = groupingSetsList.findGroupingFunctionIndex(axisIndex);
         if (groupingFunctionIndex == -1) {
             // Not a rollup column
             return false;
         }
-        return rowList.getInt(
-            groupingColumnStartIndex + groupingFunctionIndex + 1) == 1;
+        return rowList.getInt(groupingColumnStartIndex + groupingFunctionIndex + 1) == 1;
     }
 
-    ResultSet loadData(
-        SqlStatement stmt,
-        GroupingSetsList groupingSetsList)
-        throws SQLException
-    {
+    ResultSet loadData(SqlStatement stmt, GroupingSetsList groupingSetsList) throws SQLException {
         int arity = groupingSetsList.getDefaultColumns().length;
         int measureCount = groupingSetsList.getDefaultSegments().size();
         int groupingFunctionsCount = groupingSetsList.getRollupColumns().size();
@@ -906,9 +728,7 @@ public class SegmentLoader {
         // Workspace to build up lists of distinct values for each axis.
         SortedSet<Comparable>[] axisValueSets = new SortedSet[arity];
         for (int i = 0; i < axisValueSets.length; i++) {
-            axisValueSets[i] =
-                Util.PreJdk15
-                    ? new TreeSet<Comparable>(BooleanComparator.INSTANCE)
+            axisValueSets[i] = Util.PreJdk15 ? new TreeSet<Comparable>(BooleanComparator.INSTANCE)
                     : new TreeSet<Comparable>();
         }
         return axisValueSets;
@@ -924,13 +744,9 @@ public class SegmentLoader {
      * @param actualCount   Actual number of values.
      * @return Whether to use a sparse representation.
      */
-    static boolean useSparse(
-        final double possibleCount,
-        final double actualCount)
-    {
+    static boolean useSparse(final double possibleCount, final double actualCount) {
         final MondrianProperties properties = MondrianProperties.instance();
-        double densityThreshold =
-            properties.SparseSegmentDensityThreshold.get();
+        double densityThreshold = properties.SparseSegmentDensityThreshold.get();
         if (densityThreshold < 0) {
             densityThreshold = 0;
         }
@@ -941,24 +757,16 @@ public class SegmentLoader {
         if (countThreshold < 0) {
             countThreshold = 0;
         }
-        boolean sparse =
-            (possibleCount - countThreshold) * densityThreshold >
-            actualCount;
+        boolean sparse = (possibleCount - countThreshold) * densityThreshold > actualCount;
         if (possibleCount < countThreshold) {
-            assert !sparse
-                : "Should never use sparse if count is less "
-                  + "than threshold, possibleCount=" + possibleCount
-                  + ", actualCount=" + actualCount
-                  + ", countThreshold=" + countThreshold
-                  + ", densityThreshold=" + densityThreshold;
+            assert !sparse : "Should never use sparse if count is less " + "than threshold, possibleCount="
+                    + possibleCount + ", actualCount=" + actualCount + ", countThreshold=" + countThreshold
+                    + ", densityThreshold=" + densityThreshold;
         }
         if (possibleCount == actualCount) {
-            assert !sparse
-                : "Should never use sparse if result is 100% dense: "
-                  + "possibleCount=" + possibleCount
-                  + ", actualCount=" + actualCount
-                  + ", countThreshold=" + countThreshold
-                  + ", densityThreshold=" + densityThreshold;
+            assert !sparse : "Should never use sparse if result is 100% dense: " + "possibleCount=" + possibleCount
+                    + ", actualCount=" + actualCount + ", countThreshold=" + countThreshold + ", densityThreshold="
+                    + densityThreshold;
         }
         return sparse;
     }
@@ -970,13 +778,19 @@ public class SegmentLoader {
      */
     abstract class SegmentRollupWrapper {
         abstract BitKey getConstrainedColumnsBitKey();
+
         abstract SegmentColumn[] getConstrainedColumns();
+
         abstract SegmentDataset getDataset();
+
         abstract Object[] getValuesForColumn(SegmentColumn cc);
+
         abstract mondrian.spi.SegmentColumn getHeader();
+
         public int hashCode() {
             return getHeader().hashCode();
         }
+
         public boolean equals(Object obj) {
             return getHeader().equals(obj);
         }
@@ -1143,11 +957,7 @@ public class SegmentLoader {
                 this.type = type;
             }
 
-            static Column forType(
-                int ordinal,
-                SqlStatement.Type type,
-                int capacity)
-            {
+            static Column forType(int ordinal, SqlStatement.Type type, int capacity) {
                 switch (type) {
                 case OBJECT:
                 case STRING:
@@ -1185,8 +995,7 @@ public class SegmentLoader {
                 throw new UnsupportedOperationException();
             }
 
-            public abstract void populateFrom(int row, ResultSet resultSet)
-                throws SQLException;
+            public abstract void populateFrom(int row, ResultSet resultSet) throws SQLException;
 
             public Object getObject(int row) {
                 throw new UnsupportedOperationException();
@@ -1229,9 +1038,7 @@ public class SegmentLoader {
                 objects = Util.copyOf(objects, newSize);
             }
 
-            public void populateFrom(int row, ResultSet resultSet)
-                throws SQLException
-            {
+            public void populateFrom(int row, ResultSet resultSet) throws SQLException {
                 objects[row] = resultSet.getObject(ordinal + 1);
             }
 
@@ -1275,9 +1082,7 @@ public class SegmentLoader {
                 ints = Util.copyOf(ints, newSize);
             }
 
-            public void populateFrom(int row, ResultSet resultSet)
-                throws SQLException
-            {
+            public void populateFrom(int row, ResultSet resultSet) throws SQLException {
                 int i = ints[row] = resultSet.getInt(ordinal + 1);
                 if (i == 0) {
                     getNullIndicators().set(row, resultSet.wasNull());
@@ -1293,9 +1098,7 @@ public class SegmentLoader {
             }
 
             public boolean isNull(int row) {
-                return ints[row] == 0
-                       && nullIndicators != null
-                       && nullIndicators.get(row);
+                return ints[row] == 0 && nullIndicators != null && nullIndicators.get(row);
             }
 
             protected int getCapacity() {
@@ -1319,9 +1122,7 @@ public class SegmentLoader {
                 longs = Util.copyOf(longs, newSize);
             }
 
-            public void populateFrom(int row, ResultSet resultSet)
-                throws SQLException
-            {
+            public void populateFrom(int row, ResultSet resultSet) throws SQLException {
                 long i = longs[row] = resultSet.getLong(ordinal + 1);
                 if (i == 0) {
                     getNullIndicators().set(row, resultSet.wasNull());
@@ -1337,9 +1138,7 @@ public class SegmentLoader {
             }
 
             public boolean isNull(int row) {
-                return longs[row] == 0
-                       && nullIndicators != null
-                       && nullIndicators.get(row);
+                return longs[row] == 0 && nullIndicators != null && nullIndicators.get(row);
             }
 
             protected int getCapacity() {
@@ -1363,9 +1162,7 @@ public class SegmentLoader {
                 doubles = Util.copyOf(doubles, newSize);
             }
 
-            public void populateFrom(int row, ResultSet resultSet)
-                throws SQLException
-            {
+            public void populateFrom(int row, ResultSet resultSet) throws SQLException {
                 double d = doubles[row] = resultSet.getDouble(ordinal + 1);
                 if (d == 0d) {
                     getNullIndicators().set(row, resultSet.wasNull());
@@ -1385,9 +1182,7 @@ public class SegmentLoader {
             }
 
             public boolean isNull(int row) {
-                return doubles[row] == 0d
-                       && nullIndicators != null
-                       && nullIndicators.get(row);
+                return doubles[row] == 0d && nullIndicators != null && nullIndicators.get(row);
             }
 
             public Double getObject(int row) {
@@ -1399,11 +1194,8 @@ public class SegmentLoader {
         }
     }
 
-    private static class BooleanComparator
-        implements Comparator<Object>, Serializable
-    {
-        public static final BooleanComparator INSTANCE =
-            new BooleanComparator();
+    private static class BooleanComparator implements Comparator<Object>, Serializable {
+        public static final BooleanComparator INSTANCE = new BooleanComparator();
 
         private BooleanComparator() {
             if (Util.PreJdk15) {
@@ -1420,9 +1212,7 @@ public class SegmentLoader {
                 boolean b1 = (Boolean) o1;
                 if (o2 instanceof Boolean) {
                     boolean b2 = (Boolean) o2;
-                    return b1 == b2
-                        ? 0
-                        : (b1 ? 1 : -1);
+                    return b1 == b2 ? 0 : (b1 ? 1 : -1);
                 } else {
                     return -1;
                 }

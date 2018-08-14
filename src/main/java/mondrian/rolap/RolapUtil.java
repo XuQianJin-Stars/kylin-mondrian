@@ -19,6 +19,7 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -30,6 +31,7 @@ import java.util.concurrent.TimeUnit;
 
 import javax.sql.DataSource;
 
+import mondrian.util.CopyUtils;
 import org.apache.log4j.Logger;
 import org.eigenbase.util.property.StringProperty;
 
