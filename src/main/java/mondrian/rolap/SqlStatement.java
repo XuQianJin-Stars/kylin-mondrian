@@ -9,34 +9,11 @@
 */
 package mondrian.rolap;
 
-import java.lang.reflect.Proxy;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
-import java.sql.SQLException;
-import java.sql.Statement;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
-
-import javax.sql.DataSource;
-import javax.sql.RowSet;
-import javax.sql.rowset.CachedRowSet;
-
-import com.sun.rowset.CachedRowSetImpl;
-import mondrian.rolap.cache.FixedCachedRowSetImpl;
-import mondrian.util.CopyUtils;
-import org.apache.log4j.Logger;
-
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
-
 import mondrian.olap.MondrianProperties;
 import mondrian.olap.Util;
+import mondrian.rolap.cache.FixedCachedRowSetImpl;
 import mondrian.server.Execution;
 import mondrian.server.Locus;
 import mondrian.server.monitor.SqlStatementEndEvent;
@@ -46,6 +23,19 @@ import mondrian.server.monitor.SqlStatementExecuteEvent;
 import mondrian.server.monitor.SqlStatementStartEvent;
 import mondrian.util.Counters;
 import mondrian.util.DelegatingInvocationHandler;
+import org.apache.log4j.Logger;
+
+import javax.sql.DataSource;
+import javax.sql.rowset.CachedRowSet;
+import java.lang.reflect.Proxy;
+import java.sql.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * SqlStatement contains a SQL statement and associated resources throughout
@@ -62,9 +52,9 @@ import mondrian.util.DelegatingInvocationHandler;
  *
  * <p>There are a few obligations on the caller. The caller must:<ul>
  * <li>call the {@link #handle(Throwable)} method if one of the contained
- *     objects (say the {@link java.sql.ResultSet}) gives an error;
+ * objects (say the {@link java.sql.ResultSet}) gives an error;
  * <li>call the {@link #close()} method if all operations complete
- *     successfully.
+ * successfully.
  * <li>increment the {@link #rowCount} field each time a row is fetched.
  * </ul>
  *
@@ -85,8 +75,8 @@ public class SqlStatement implements DBStatement {
 
     private static final Semaphore querySemaphore = new Semaphore(MondrianProperties.instance().QueryLimit.get(), true);
 
-    private static final Cache<String, ResultSet> QEURY_CACHE = CacheBuilder.newBuilder()
-            .expireAfterWrite(5, TimeUnit.MINUTES).maximumSize(1000).build();
+    private static final Cache<String, CachedRowSet> QUERY_CACHE = CacheBuilder.newBuilder()
+            .expireAfterWrite(5, TimeUnit.MINUTES).maximumSize(100).build();
 
     private final DataSource dataSource;
     private Connection jdbcConnection;
@@ -110,19 +100,19 @@ public class SqlStatement implements DBStatement {
     /**
      * Creates a SqlStatement.
      *
-     * @param dataSource Data source
-     * @param sql SQL
-     * @param types Suggested types of columns, or null;
-     *     if present, must have one element for each SQL column;
-     *     each not-null entry overrides deduced JDBC type of the column
-     * @param maxRows Maximum rows; <= 0 means no maximum
-     * @param firstRowOrdinal Ordinal of first row to skip to; <= 0 do not skip
-     * @param locus Execution context of this statement
-     * @param resultSetType Result set type
+     * @param dataSource           Data source
+     * @param sql                  SQL
+     * @param types                Suggested types of columns, or null;
+     *                             if present, must have one element for each SQL column;
+     *                             each not-null entry overrides deduced JDBC type of the column
+     * @param maxRows              Maximum rows; <= 0 means no maximum
+     * @param firstRowOrdinal      Ordinal of first row to skip to; <= 0 do not skip
+     * @param locus                Execution context of this statement
+     * @param resultSetType        Result set type
      * @param resultSetConcurrency Result set concurrency
      */
     public SqlStatement(DataSource dataSource, String sql, List<Type> types, int maxRows, int firstRowOrdinal,
-            Locus locus, int resultSetType, int resultSetConcurrency, Util.Function1<Statement, Void> callback) {
+                        Locus locus, int resultSetType, int resultSetConcurrency, Util.Function1<Statement, Void> callback) {
         this.callback = callback;
         this.id = ID_GENERATOR.getAndIncrement();
         this.dataSource = dataSource;
@@ -200,22 +190,21 @@ public class SqlStatement implements DBStatement {
             locus.getServer().getMonitor().sendEvent(
                     new SqlStatementStartEvent(startTimeMillis, id, locus, sql, getPurpose(), getCellRequestCount()));
 
-            ResultSet cachedResultSet = QEURY_CACHE.getIfPresent(sql);
-            if (cachedResultSet != null) {
-                CachedRowSet rowSet = new FixedCachedRowSetImpl();
-                rowSet.populate(CopyUtils.deepCopy(cachedResultSet));
-                this.resultSet = rowSet;
 
+//            this.resultSet = statement.executeQuery(sql);
+
+            CachedRowSet cachedResultSet = QUERY_CACHE.getIfPresent(sql);
+            if (cachedResultSet == null) {
+                try (ResultSet rs = statement.executeQuery(sql)) {
+                    CachedRowSet rowSet = new FixedCachedRowSetImpl();
+                    rowSet.populate(rs);
+                    QUERY_CACHE.put(sql, rowSet);
+                    this.resultSet = rowSet.createCopyNoConstraints();
+                }
             } else {
-                this.resultSet = statement.executeQuery(sql);
-                CachedRowSet rowSet = new FixedCachedRowSetImpl();
-                rowSet.populate(this.resultSet);
-                ResultSet copyResult1 = CopyUtils.deepCopy(rowSet);
-                ResultSet copyResult2 = CopyUtils.deepCopy(copyResult1);
-                QEURY_CACHE.put(sql, copyResult1);
-                this.resultSet.close();
-                this.resultSet = copyResult2;
+                this.resultSet = cachedResultSet.createCopyNoConstraints();
             }
+
             // skip to first row specified in request
             this.state = State.ACTIVE;
             if (firstRowOrdinal > 0) {
@@ -364,10 +353,10 @@ public class SqlStatement implements DBStatement {
      * <p>Caching is necessary on JDBC drivers (e.g. sun's JDBC-ODBC bridge)
      * that only allow you to get the value of a column once per row.
      *
-     * @param column Column ordinal (0-based)
-     * @param type Desired type
+     * @param column  Column ordinal (0-based)
+     * @param type    Desired type
      * @param caching Whether accessor should cache value for if the same
-     *     column's value is accessed more than once on the same row
+     *                column's value is accessed more than once on the same row
      * @return Value
      */
     private Accessor createAccessor(int column, Type type, boolean caching) {
@@ -388,50 +377,50 @@ public class SqlStatement implements DBStatement {
         }
         final int columnPlusOne = column + 1;
         switch (type) {
-        case OBJECT:
-            return new Accessor() {
-                public Comparable get() throws SQLException {
-                    return (Comparable) resultSet.getObject(columnPlusOne);
-                }
-            };
-        case STRING:
-            return new Accessor() {
-                public Comparable get() throws SQLException {
-                    return resultSet.getString(columnPlusOne);
-                }
-            };
-        case INT:
-            return new Accessor() {
-                public Comparable get() throws SQLException {
-                    final int val = resultSet.getInt(columnPlusOne);
-                    if (val == 0 && resultSet.wasNull()) {
-                        return null;
+            case OBJECT:
+                return new Accessor() {
+                    public Comparable get() throws SQLException {
+                        return (Comparable) resultSet.getObject(columnPlusOne);
                     }
-                    return val;
-                }
-            };
-        case LONG:
-            return new Accessor() {
-                public Comparable get() throws SQLException {
-                    final long val = resultSet.getLong(columnPlusOne);
-                    if (val == 0 && resultSet.wasNull()) {
-                        return null;
+                };
+            case STRING:
+                return new Accessor() {
+                    public Comparable get() throws SQLException {
+                        return resultSet.getString(columnPlusOne);
                     }
-                    return val;
-                }
-            };
-        case DOUBLE:
-            return new Accessor() {
-                public Comparable get() throws SQLException {
-                    final double val = resultSet.getDouble(columnPlusOne);
-                    if (val == 0 && resultSet.wasNull()) {
-                        return null;
+                };
+            case INT:
+                return new Accessor() {
+                    public Comparable get() throws SQLException {
+                        final int val = resultSet.getInt(columnPlusOne);
+                        if (val == 0 && resultSet.wasNull()) {
+                            return null;
+                        }
+                        return val;
                     }
-                    return val;
-                }
-            };
-        default:
-            throw Util.unexpected(type);
+                };
+            case LONG:
+                return new Accessor() {
+                    public Comparable get() throws SQLException {
+                        final long val = resultSet.getLong(columnPlusOne);
+                        if (val == 0 && resultSet.wasNull()) {
+                            return null;
+                        }
+                        return val;
+                    }
+                };
+            case DOUBLE:
+                return new Accessor() {
+                    public Comparable get() throws SQLException {
+                        final double val = resultSet.getDouble(columnPlusOne);
+                        if (val == 0 && resultSet.wasNull()) {
+                            return null;
+                        }
+                        return val;
+                    }
+                };
+            default:
+                throw Util.unexpected(type);
         }
     }
 
@@ -473,7 +462,7 @@ public class SqlStatement implements DBStatement {
      * @return Wrapped result set
      */
     public ResultSet getWrappedResultSet() {
-        return (ResultSet) Proxy.newProxyInstance(null, new Class<?>[] { ResultSet.class },
+        return (ResultSet) Proxy.newProxyInstance(null, new Class<?>[]{ResultSet.class},
                 new MyDelegatingInvocationHandler(this));
     }
 
@@ -506,18 +495,18 @@ public class SqlStatement implements DBStatement {
 
         public Object get(ResultSet resultSet, int column) throws SQLException {
             switch (this) {
-            case OBJECT:
-                return resultSet.getObject(column + 1);
-            case STRING:
-                return resultSet.getString(column + 1);
-            case INT:
-                return resultSet.getInt(column + 1);
-            case LONG:
-                return resultSet.getLong(column + 1);
-            case DOUBLE:
-                return resultSet.getDouble(column + 1);
-            default:
-                throw Util.unexpected(this);
+                case OBJECT:
+                    return resultSet.getObject(column + 1);
+                case STRING:
+                    return resultSet.getString(column + 1);
+                case INT:
+                    return resultSet.getInt(column + 1);
+                case LONG:
+                    return resultSet.getLong(column + 1);
+                case DOUBLE:
+                    return resultSet.getDouble(column + 1);
+                default:
+                    throw Util.unexpected(this);
             }
         }
     }
@@ -568,7 +557,7 @@ public class SqlStatement implements DBStatement {
         private final int cellRequestCount;
 
         public StatementLocus(Execution execution, String component, String message, SqlStatementEvent.Purpose purpose,
-                int cellRequestCount) {
+                              int cellRequestCount) {
             super(execution, component, message);
             this.purpose = purpose;
             this.cellRequestCount = cellRequestCount;
