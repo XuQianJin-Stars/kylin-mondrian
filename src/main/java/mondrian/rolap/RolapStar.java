@@ -51,7 +51,7 @@ public class RolapStar {
 
     private final Table factTable;
 
-    private static final int DEFAULT_CARDINALITY = 100;
+    private static final int DEFAULT_CARDINALITY = 1;
 
     /**
      * Keeps track of the columns across all tables. Should have

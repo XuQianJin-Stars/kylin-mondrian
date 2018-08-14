@@ -12,26 +12,46 @@
 */
 package mondrian.rolap;
 
-import mondrian.calc.ExpCompiler;
-import mondrian.olap.*;
-import mondrian.olap.fun.FunUtil;
-import mondrian.resource.MondrianResource;
-import mondrian.server.*;
-import mondrian.spi.Dialect;
-import mondrian.util.ClassResolver;
+import static mondrian.olap.fun.FunUtil.compareSiblingMembersByName;
 
-import org.apache.log4j.Logger;
-
-import org.eigenbase.util.property.StringProperty;
-
-import java.io.*;
-import java.lang.reflect.*;
+import java.io.Serializable;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.sql.SQLException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.StringTokenizer;
+import java.util.concurrent.TimeUnit;
 
 import javax.sql.DataSource;
 
-import static mondrian.olap.fun.FunUtil.*;
+import org.apache.log4j.Logger;
+import org.eigenbase.util.property.StringProperty;
+
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
+
+import mondrian.calc.ExpCompiler;
+import mondrian.olap.Evaluator;
+import mondrian.olap.Hierarchy;
+import mondrian.olap.Id;
+import mondrian.olap.MatchType;
+import mondrian.olap.MondrianException;
+import mondrian.olap.MondrianProperties;
+import mondrian.olap.NativeEvaluationUnsupportedException;
+import mondrian.olap.SchemaReader;
+import mondrian.olap.Util;
+import mondrian.resource.MondrianResource;
+import mondrian.server.Execution;
+import mondrian.server.Locus;
+import mondrian.server.Statement;
+import mondrian.spi.Dialect;
+import mondrian.util.ClassResolver;
 
 /**
  * Utility methods for classes in the <code>mondrian.rolap</code> package.
@@ -42,10 +62,8 @@ import static mondrian.olap.fun.FunUtil.*;
 public class RolapUtil {
     public static final Logger MDX_LOGGER = Logger.getLogger("mondrian.mdx");
     public static final Logger SQL_LOGGER = Logger.getLogger("mondrian.sql");
-    public static final Logger MONITOR_LOGGER =
-        Logger.getLogger("mondrian.server.monitor");
-    public static final Logger PROFILE_LOGGER =
-        Logger.getLogger("mondrian.profile");
+    public static final Logger MONITOR_LOGGER = Logger.getLogger("mondrian.server.monitor");
+    public static final Logger PROFILE_LOGGER = Logger.getLogger("mondrian.profile");
 
     static final Logger LOGGER = Logger.getLogger(RolapUtil.class);
 
@@ -63,8 +81,7 @@ public class RolapUtil {
     /**
      * Special value that represents a null key.
      */
-    public static final Comparable<?> sqlNullValue =
-        RolapUtilComparable.INSTANCE;
+    public static final Comparable<?> sqlNullValue = RolapUtilComparable.INSTANCE;
 
     /** Name of member that has null key. */
     public static final String NULL_NAME = "#null";
@@ -77,38 +94,23 @@ public class RolapUtil {
      * @param schemaReader Schema reader
      * @return Wrapped schema reader
      */
-    public static SchemaReader locusSchemaReader(
-        RolapConnection connection,
-        final SchemaReader schemaReader)
-    {
+    public static SchemaReader locusSchemaReader(RolapConnection connection, final SchemaReader schemaReader) {
         final Statement statement = connection.getInternalStatement();
         final Execution execution = new Execution(statement, 0);
-        final Locus locus =
-            new Locus(
-                execution,
-                "Schema reader",
-                null);
-        return (SchemaReader) Proxy.newProxyInstance(
-            SchemaReader.class.getClassLoader(),
-            new Class[]{SchemaReader.class},
-            new InvocationHandler() {
-                public Object invoke(
-                    Object proxy,
-                    Method method,
-                    Object[] args)
-                    throws Throwable
-                {
-                    Locus.push(locus);
-                    try {
-                        return method.invoke(schemaReader, args);
-                    } catch (InvocationTargetException e) {
-                        throw e.getCause();
-                    } finally {
-                        Locus.pop(locus);
+        final Locus locus = new Locus(execution, "Schema reader", null);
+        return (SchemaReader) Proxy.newProxyInstance(SchemaReader.class.getClassLoader(),
+                new Class[] { SchemaReader.class }, new InvocationHandler() {
+                    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+                        Locus.push(locus);
+                        try {
+                            return method.invoke(schemaReader, args);
+                        } catch (InvocationTargetException e) {
+                            throw e.getCause();
+                        } finally {
+                            Locus.pop(locus);
+                        }
                     }
-                }
-            }
-        );
+                });
     }
 
     /**
@@ -138,13 +140,10 @@ public class RolapUtil {
      *
      * @see #mdxNullLiteral()
      */
-    private static final class RolapUtilComparable
-        implements Comparable, Serializable
-    {
+    private static final class RolapUtilComparable implements Comparable, Serializable {
         private static final long serialVersionUID = -2595758291465179116L;
 
-        public static final RolapUtilComparable INSTANCE =
-            new RolapUtilComparable();
+        public static final RolapUtilComparable INSTANCE = new RolapUtilComparable();
 
         // singleton
         private RolapUtilComparable() {
@@ -166,12 +165,9 @@ public class RolapUtil {
      * A comparator singleton instance which can handle the presence of
      * {@link RolapUtilComparable} instances in a collection.
      */
-    public static final Comparator ROLAP_COMPARATOR =
-        new RolapUtilComparator();
+    public static final Comparator ROLAP_COMPARATOR = new RolapUtilComparator();
 
-    private static final class RolapUtilComparator<T extends Comparable<T>>
-        implements Comparator<T>
-    {
+    private static final class RolapUtilComparator<T extends Comparable<T>> implements Comparator<T> {
         public int compare(T o1, T o2) {
             try {
                 return o1.compareTo(o2);
@@ -200,8 +196,7 @@ public class RolapUtil {
     }
 
     public static void reloadNullLiteral() {
-        mdxNullLiteral =
-            MondrianProperties.instance().NullMemberRepresentation.get();
+        mdxNullLiteral = MondrianProperties.instance().NullMemberRepresentation.get();
     }
 
     /**
@@ -213,9 +208,7 @@ public class RolapUtil {
     private static final Set<String> loadedDrivers = new HashSet<String>();
 
     static RolapMember[] toArray(List<RolapMember> v) {
-        return v.isEmpty()
-            ? new RolapMember[0]
-            : v.toArray(new RolapMember[v.size()]);
+        return v.isEmpty() ? new RolapMember[0] : v.toArray(new RolapMember[v.size()]);
     }
 
     static RolapMember lookupMember(
@@ -275,8 +268,7 @@ public class RolapUtil {
             }
         }
         if (member == null && failIfNotFound) {
-            throw MondrianResource.instance().MdxCantFindMember.ex(
-                Util.implode(segments));
+            throw MondrianResource.instance().MdxCantFindMember.ex(Util.implode(segments));
         }
         return member;
     }
@@ -296,11 +288,7 @@ public class RolapUtil {
      * @param locus Locus of execution
      * @return ResultSet
      */
-    public static SqlStatement executeQuery(
-        DataSource dataSource,
-        String sql,
-        Locus locus)
-    {
+    public static SqlStatement executeQuery(DataSource dataSource, String sql, Locus locus) {
         return executeQuery(dataSource, sql, null, 0, 0, locus, -1, -1, null);
     }
 
@@ -359,30 +347,18 @@ public class RolapUtil {
      *
      * @param reason reason why native evaluation was skipped
      */
-    public static void alertNonNative(
-        String functionName,
-        String reason)
-        throws NativeEvaluationUnsupportedException
-    {
+    public static void alertNonNative(String functionName, String reason) throws NativeEvaluationUnsupportedException {
         // No i18n for log message, but yes for excn
-        String alertMsg =
-            "Unable to use native SQL evaluation for '" + functionName
-            + "'; reason:  " + reason;
+        String alertMsg = "Unable to use native SQL evaluation for '" + functionName + "'; reason:  " + reason;
 
-        StringProperty alertProperty =
-            MondrianProperties.instance().AlertNativeEvaluationUnsupported;
+        StringProperty alertProperty = MondrianProperties.instance().AlertNativeEvaluationUnsupported;
         String alertValue = alertProperty.get();
 
-        if (alertValue.equalsIgnoreCase(
-                org.apache.log4j.Level.WARN.toString()))
-        {
+        if (alertValue.equalsIgnoreCase(org.apache.log4j.Level.WARN.toString())) {
             LOGGER.warn(alertMsg);
-        } else if (alertValue.equalsIgnoreCase(
-                org.apache.log4j.Level.ERROR.toString()))
-        {
+        } else if (alertValue.equalsIgnoreCase(org.apache.log4j.Level.ERROR.toString())) {
             LOGGER.error(alertMsg);
-            throw MondrianResource.instance().NativeEvaluationUnsupported.ex(
-                functionName);
+            throw MondrianResource.instance().NativeEvaluationUnsupported.ex(functionName);
         }
     }
 
@@ -400,13 +376,9 @@ public class RolapUtil {
             if (loadedDrivers.add(jdbcDriver)) {
                 try {
                     ClassResolver.INSTANCE.forName(jdbcDriver, true);
-                    LOGGER.info(
-                        "Mondrian: JDBC driver "
-                        + jdbcDriver + " loaded successfully");
+                    LOGGER.info("Mondrian: JDBC driver " + jdbcDriver + " loaded successfully");
                 } catch (ClassNotFoundException e) {
-                    LOGGER.warn(
-                        "Mondrian: Warning: JDBC driver "
-                        + jdbcDriver + " not found");
+                    LOGGER.warn("Mondrian: Warning: JDBC driver " + jdbcDriver + " not found");
                 }
             }
         }
@@ -417,9 +389,7 @@ public class RolapUtil {
      * whether the dependencies declared via
      * {@link mondrian.calc.Calc#dependsOn(Hierarchy)} are accurate.
      */
-    public static ExpCompiler createDependencyTestingCompiler(
-        ExpCompiler compiler)
-    {
+    public static ExpCompiler createDependencyTestingCompiler(ExpCompiler compiler) {
         return new RolapDependencyTestingEvaluator.DteCompiler(compiler);
     }
 
@@ -439,13 +409,8 @@ public class RolapUtil {
      * @return matching member (if it exists) or the closest matching one
      * in the case of a BEFORE or AFTER search
      */
-    public static RolapMember findBestMemberMatch(
-        List<RolapMember> members,
-        RolapMember parent,
-        RolapCubeLevel level,
-        Id.Segment searchName,
-        MatchType matchType)
-    {
+    public static RolapMember findBestMemberMatch(List<RolapMember> members, RolapMember parent, RolapCubeLevel level,
+            Id.Segment searchName, MatchType matchType) {
         if (!(searchName instanceof Id.NameSegment)) {
             return null;
         }
@@ -465,9 +430,7 @@ public class RolapUtil {
         RolapMember bestMatch = null;
         for (RolapMember member : members) {
             int rc;
-            if (nameSegment.quoting == Id.Quoting.KEY
-                && member instanceof RolapMember)
-            {
+            if (nameSegment.quoting == Id.Quoting.KEY && member instanceof RolapMember) {
                 if (member.getKey().toString().equals(nameSegment.name)) {
                     return member;
                 }
@@ -476,32 +439,19 @@ public class RolapUtil {
                 rc = Util.compareName(member.getName(), nameSegment.name);
             } else {
                 if (searchMember == null) {
-                    searchMember =
-                        level.getHierarchy().createMember(
-                            parent, level, nameSegment.name, null);
+                    searchMember = level.getHierarchy().createMember(parent, level, nameSegment.name, null);
                 }
-                rc =
-                    compareSiblingMembersByName(
-                        member,
-                        searchMember);
+                rc = compareSiblingMembersByName(member, searchMember);
             }
             if (rc == 0) {
                 return member;
             }
             if (matchType == MatchType.BEFORE) {
-                if (rc < 0
-                    && (bestMatch == null
-                        || compareSiblingMembersByName(member, bestMatch)
-                        > 0))
-                {
+                if (rc < 0 && (bestMatch == null || compareSiblingMembersByName(member, bestMatch) > 0)) {
                     bestMatch = member;
                 }
             } else if (matchType == MatchType.AFTER) {
-                if (rc > 0
-                    && (bestMatch == null
-                        || compareSiblingMembersByName(member, bestMatch)
-                        < 0))
-                {
+                if (rc > 0 && (bestMatch == null || compareSiblingMembersByName(member, bestMatch) < 0)) {
                     bestMatch = member;
                 }
             }
@@ -513,37 +463,25 @@ public class RolapUtil {
     }
 
     public static ExpCompiler createProfilingCompiler(ExpCompiler compiler) {
-        return new RolapProfilingEvaluator.ProfilingEvaluatorCompiler(
-            compiler);
+        return new RolapProfilingEvaluator.ProfilingEvaluatorCompiler(compiler);
     }
 
-    public static RolapSchema.PhysView convertInlineTableToRelation(
-        RolapSchema.PhysInlineTable inlineTable,
-        final Dialect dialect)
-    {
+    public static RolapSchema.PhysView convertInlineTableToRelation(RolapSchema.PhysInlineTable inlineTable,
+            final Dialect dialect) {
         List<String> columnNames = new ArrayList<String>();
         List<String> columnTypes = new ArrayList<String>();
         for (RolapSchema.PhysColumn col : inlineTable.columnsByName.values()) {
             columnNames.add(col.name);
             columnTypes.add(col.datatype.name());
         }
-        final String sql =
-            dialect.generateInline(
-                columnNames,
-                columnTypes,
-                inlineTable.rowList);
-        return new RolapSchema.PhysView(
-            inlineTable.physSchema,
-            inlineTable.alias,
-            sql);
+        final String sql = dialect.generateInline(columnNames, columnTypes, inlineTable.rowList);
+        return new RolapSchema.PhysView(inlineTable.physSchema, inlineTable.alias, sql);
     }
 
     /**
      * Creates a dummy evaluator.
      */
-    public static Evaluator createEvaluator(
-        Statement statement)
-    {
+    public static Evaluator createEvaluator(Statement statement) {
         Execution dummyExecution = new Execution(statement, 0);
         final RolapResult result = new RolapResult(dummyExecution, false);
         return result.getRootEvaluator();
