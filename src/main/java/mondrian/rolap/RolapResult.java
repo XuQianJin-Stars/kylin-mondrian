@@ -869,7 +869,7 @@ public class RolapResult extends ResultBase {
                 TupleCursor cursor = iterable.tupleCursor();
                 if (construct) {
                 } else if (axisMembers != null) {
-                    axisMembers.mergeTupleIter(cursor);
+                    //axisMembers.mergeTupleIter(cursor);
                 }
             }
             return iterable;
@@ -1072,25 +1072,25 @@ public class RolapResult extends ResultBase {
         } else {
             RolapAxis axis = (RolapAxis) axes[axisOrdinal];
             TupleList tupleList = axis.getTupleList();
-            Util.discard(tupleList.size()); // force materialize
+//            Util.discard(tupleList.size()); // force materialize
 
-            for (List<Member> tuple : tupleList) {
-                List<Member> measures =
-                    new ArrayList<Member>(
-                        statement.getQuery().getMeasuresMembers());
-                for (Member measure : measures) {
-                    if (measure instanceof RolapBaseCubeMeasure) {
-                        RolapBaseCubeMeasure baseCubeMeasure =
-                            (RolapBaseCubeMeasure) measure;
-                        if (baseCubeMeasure.getAggregator()
-                            == RolapAggregator.DistinctCount)
-                        {
-                            processDistinctMeasureExpr(
-                                tuple, baseCubeMeasure);
-                        }
-                    }
-                }
-            }
+//            for (List<Member> tuple : tupleList) {
+//                List<Member> measures =
+//                    new ArrayList<Member>(
+//                        statement.getQuery().getMeasuresMembers());
+//                for (Member measure : measures) {
+//                    if (measure instanceof RolapBaseCubeMeasure) {
+//                        RolapBaseCubeMeasure baseCubeMeasure =
+//                            (RolapBaseCubeMeasure) measure;
+//                        if (baseCubeMeasure.getAggregator()
+//                            == RolapAggregator.DistinctCount)
+//                        {
+//                            processDistinctMeasureExpr(
+//                                tuple, baseCubeMeasure);
+//                        }
+//                    }
+//                }
+//            }
             int tupleIndex = 0;
             for (final List<Member> tuple : tupleList) {
                 point.setAxis(axisOrdinal, tupleIndex);
