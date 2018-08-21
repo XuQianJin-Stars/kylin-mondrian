@@ -616,6 +616,7 @@ public class RolapCube extends CubeBase {
             Level level,
             boolean includeCalculated)
         {
+            RolapSchemaProvider.setCurrentSchema(RolapCube.this.schema);
             List<Member> members = super.getLevelMembers(level, false);
             if (includeCalculated) {
                 members = Util.addLevelCalculatedMembers(this, level, members);

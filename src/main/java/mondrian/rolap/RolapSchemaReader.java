@@ -454,6 +454,38 @@ public class RolapSchemaReader
                 constraint =
                     sqlConstraintFactory.getMemberChildrenConstraint(null);
             }
+
+            if (parent.getParentMember() == null) {
+                final Larders.LarderBuilder builder = new Larders.LarderBuilder();
+                String nameValue = ((Id.NameSegment)childName).getName();
+                String captionValue = parent.getUniqueName().replaceFirst("\\[All.*?\\]", "[" + nameValue + "]");
+                RolapMember parentMember = parent;
+                RolapCubeLevel childLevel = parent.getLevel().getChildLevel();
+
+                builder.add(mondrian.olap.Property.NAME, nameValue);
+
+                if (captionValue != null) {
+                    final String caption = captionValue.toString();
+                    if (!caption.equals(nameValue)) {
+                        builder.caption(caption);
+                    }
+                }
+                RolapMemberBase member = new RolapMemberBase(parentMember, childLevel, null, Member.MemberType.REGULAR,
+                        RolapMemberBase.deriveUniqueName(parentMember, childLevel, nameValue, false), builder.build());
+
+                List<RolapMember> children = new LinkedList<>();
+                children.add(member);
+                if (children.size() > 0) {
+                    return
+                            RolapUtil.findBestMemberMatch(
+                                    children,
+                                    parent,
+                                    children.get(0).getLevel(),
+                                    childName,
+                                    matchType);
+                }
+            }
+
             List<RolapMember> children =
                 internalGetMemberChildren(parent, constraint);
             if (children.size() > 0) {
