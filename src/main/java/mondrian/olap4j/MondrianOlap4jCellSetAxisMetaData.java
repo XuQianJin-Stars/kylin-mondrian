@@ -52,7 +52,6 @@ class MondrianOlap4jCellSetAxisMetaData implements CellSetAxisMetaData {
         this.cellSetMetaData = cellSetMetaData;
 
         // populate property list
-        /*
         for (Id id : queryAxis.getDimensionProperties()) {
             final String[] names = id.toStringArray();
             Property olap4jProperty = null;
@@ -78,7 +77,6 @@ class MondrianOlap4jCellSetAxisMetaData implements CellSetAxisMetaData {
             }
             propertyList.add(olap4jProperty);
         }
-        */
     }
 
     public Axis getAxisOrdinal() {
