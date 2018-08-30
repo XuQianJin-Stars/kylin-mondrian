@@ -18,6 +18,7 @@ import mondrian.server.*;
 import mondrian.spi.*;
 import mondrian.util.*;
 
+import mondrian.xmla.XmlaRequestProperties;
 import org.apache.log4j.Logger;
 
 import org.olap4j.Scenario;
@@ -439,22 +440,25 @@ public class RolapConnection extends ConnectionBase {
      */
     public Result execute(final Execution execution) {
         execution.copyMDC();
+        final boolean enableOptimizeMdx = XmlaRequestProperties.enableOptimizeMdx.get();
+        XmlaRequestProperties.enableOptimizeMdx.remove();
         return
             server.getResultShepherd()
                 .shepherdExecution(
                     execution,
                     new Callable<Result>() {
                         public Result call() throws Exception {
-                            return executeInternal(execution);
+                            return executeInternal(execution, enableOptimizeMdx);
                         }
                     });
     }
 
-    private Result executeInternal(final Execution execution) {
+    private Result executeInternal(final Execution execution, final boolean enableOptimizeMdx) {
         execution.setContextMap();
 
         // set current schema
         RolapSchemaProvider.setCurrentSchema(this.schema);
+        XmlaRequestProperties.enableOptimizeMdx.set(enableOptimizeMdx);
 
         final Statement statement = execution.getMondrianStatement();
         // Cleanup any previous executions still running

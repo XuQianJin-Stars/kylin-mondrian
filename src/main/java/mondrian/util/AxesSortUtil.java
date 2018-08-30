@@ -25,9 +25,11 @@
  */
 package mondrian.util;
 
+import java.util.LinkedList;
 import java.util.List;
 
 import mondrian.calc.TupleList;
+import mondrian.calc.impl.ListTupleList;
 import mondrian.olap.Axis;
 import mondrian.olap.Member;
 import mondrian.rolap.RolapAxis;
@@ -48,7 +50,7 @@ public class AxesSortUtil {
 
     private RolapAxis sortRolapAxis(RolapAxis axis) {
         int prevChangedPosition = -1;
-        TupleList tupleList = axis.getTupleList();
+        TupleList tupleList = getTupleListCopy(axis.getTupleList());
         for (int i = 0; i < tupleList.size(); i++) {
             List<Member> tuple = tupleList.get(i);
             int allMemIdxOfTuple = -1;
@@ -57,6 +59,15 @@ public class AxesSortUtil {
             }
         }
         return new RolapAxis(tupleList);
+    }
+
+    private TupleList getTupleListCopy(TupleList tupleList) {
+        List<Member> members = new LinkedList<>();
+        int arity = tupleList.get(0).size();
+        for (List<Member> tuple : tupleList) {
+            members.addAll(tuple);
+        }
+        return new ListTupleList(arity, members);
     }
 
     private int allMemIdxOfTuple(List<Member> tuple) {

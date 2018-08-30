@@ -716,13 +716,13 @@ public class RolapStar {
          * @return the column cardinality.
          */
         public int getCardinality() {
-            return DEFAULT_CARDINALITY;
-//            if (approxCardinality < 0) {
-//                approxCardinality =
-//                    table.relation.getSchema().statistic.getColumnCardinality(
-//                        table.relation, expression, approxCardinality);
-//            }
-//            return approxCardinality;
+//            return DEFAULT_CARDINALITY;
+            if (approxCardinality < 0) {
+                approxCardinality =
+                    table.relation.getSchema().statistic.getColumnCardinality(
+                        table.relation, expression, approxCardinality);
+            }
+            return approxCardinality;
         }
 
         public String toString() {

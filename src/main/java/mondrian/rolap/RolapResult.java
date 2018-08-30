@@ -25,6 +25,7 @@ import mondrian.server.Locus;
 import mondrian.spi.CellFormatter;
 import mondrian.util.*;
 
+import mondrian.xmla.XmlaRequestProperties;
 import org.apache.log4j.Logger;
 
 import java.util.*;
@@ -273,12 +274,12 @@ public class RolapResult extends ResultBase {
             // reset to total member count
             axisMembers.clearTotalCellCount();
 
-//            for (int i = 0; i < axes.length; i++) {
-//                final QueryAxis axis = query.axes[i];
-//                final Calc calc = query.axisCalcs[i];
-//                loadMembers(
-//                    emptyNonAllMembers, evaluator, axis, calc, axisMembers);
-//            }
+            for (int i = 0; i < axes.length; i++) {
+                final QueryAxis axis = query.axes[i];
+                final Calc calc = query.axisCalcs[i];
+                loadMembers(
+                    emptyNonAllMembers, evaluator, axis, calc, axisMembers);
+            }
 
             if (!axisMembers.isEmpty()) {
                 for (Member m : axisMembers) {
@@ -451,8 +452,10 @@ public class RolapResult extends ResultBase {
             } while (phase());
 
             // sort axes
-            AxesSortUtil axesSortUtil = new AxesSortUtil();
-            axesSortUtil.sortAxes(axes);
+            if (XmlaRequestProperties.enableOptimizeMdx.get()) {
+                AxesSortUtil axesSortUtil = new AxesSortUtil();
+                axesSortUtil.sortAxes(axes);
+            }
 
             evaluator.restore(savepoint);
 
@@ -1076,25 +1079,25 @@ public class RolapResult extends ResultBase {
         } else {
             RolapAxis axis = (RolapAxis) axes[axisOrdinal];
             TupleList tupleList = axis.getTupleList();
-//            Util.discard(tupleList.size()); // force materialize
+            Util.discard(tupleList.size()); // force materialize
 
-//            for (List<Member> tuple : tupleList) {
-//                List<Member> measures =
-//                    new ArrayList<Member>(
-//                        statement.getQuery().getMeasuresMembers());
-//                for (Member measure : measures) {
-//                    if (measure instanceof RolapBaseCubeMeasure) {
-//                        RolapBaseCubeMeasure baseCubeMeasure =
-//                            (RolapBaseCubeMeasure) measure;
-//                        if (baseCubeMeasure.getAggregator()
-//                            == RolapAggregator.DistinctCount)
-//                        {
-//                            processDistinctMeasureExpr(
-//                                tuple, baseCubeMeasure);
-//                        }
-//                    }
-//                }
-//            }
+            for (List<Member> tuple : tupleList) {
+                List<Member> measures =
+                    new ArrayList<Member>(
+                        statement.getQuery().getMeasuresMembers());
+                for (Member measure : measures) {
+                    if (measure instanceof RolapBaseCubeMeasure) {
+                        RolapBaseCubeMeasure baseCubeMeasure =
+                            (RolapBaseCubeMeasure) measure;
+                        if (baseCubeMeasure.getAggregator()
+                            == RolapAggregator.DistinctCount)
+                        {
+                            processDistinctMeasureExpr(
+                                tuple, baseCubeMeasure);
+                        }
+                    }
+                }
+            }
             int tupleIndex = 0;
             for (final List<Member> tuple : tupleList) {
                 point.setAxis(axisOrdinal, tupleIndex);
