@@ -28,7 +28,7 @@ import java.util.*;
  *
  * @author jhyde
 */
-abstract class AbstractEndToEndTupleList extends AbstractTupleList {
+public abstract class AbstractEndToEndTupleList extends AbstractTupleList {
 
     AbstractEndToEndTupleList(int arity) {
         super(arity);

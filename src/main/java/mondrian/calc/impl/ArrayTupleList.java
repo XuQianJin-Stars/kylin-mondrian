@@ -137,8 +137,8 @@ public class ArrayTupleList extends AbstractEndToEndTupleList
                 "Tuple length does not match arity");
         }
         int n = index * arity;
-        ensureCapacity((size + 1) + arity);
-        System.arraycopy(objectData, n, objectData, n + arity, arity);
+        ensureCapacity((size + 1) * arity);
+        System.arraycopy(objectData, n, objectData, n + arity, (size - index) * arity);
         for (Member member : members) {
             objectData[n++] = member;
         }
@@ -179,7 +179,7 @@ public class ArrayTupleList extends AbstractEndToEndTupleList
         final int n = index * arity;
         // Strict compliance with List API:
         // List<Member> previous = get(index);
-        System.arraycopy(objectData, n + arity, objectData, n, arity);
+        System.arraycopy(objectData, n + arity, objectData, n, (size - 1 - index) * arity);
         --size;
         return null; // previous;
     }

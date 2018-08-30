@@ -273,12 +273,12 @@ public class RolapResult extends ResultBase {
             // reset to total member count
             axisMembers.clearTotalCellCount();
 
-            for (int i = 0; i < axes.length; i++) {
-                final QueryAxis axis = query.axes[i];
-                final Calc calc = query.axisCalcs[i];
-                loadMembers(
-                    emptyNonAllMembers, evaluator, axis, calc, axisMembers);
-            }
+//            for (int i = 0; i < axes.length; i++) {
+//                final QueryAxis axis = query.axes[i];
+//                final Calc calc = query.axisCalcs[i];
+//                loadMembers(
+//                    emptyNonAllMembers, evaluator, axis, calc, axisMembers);
+//            }
 
             if (!axisMembers.isEmpty()) {
                 for (Member m : axisMembers) {
@@ -449,6 +449,10 @@ public class RolapResult extends ResultBase {
                     // Safe to ignore. Need to call 'phase' and loop again.
                 }
             } while (phase());
+
+            // sort axes
+            AxesSortUtil axesSortUtil = new AxesSortUtil();
+            axesSortUtil.sortAxes(axes);
 
             evaluator.restore(savepoint);
 
