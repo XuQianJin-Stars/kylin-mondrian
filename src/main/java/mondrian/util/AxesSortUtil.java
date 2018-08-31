@@ -94,7 +94,7 @@ public class AxesSortUtil {
     private int changeTuplePosition(List<Member> tuple, TupleList tupleList, int currentTuplePosition,
             int prevChangedPosition, int allMemIdxOfTuple) {
         for (int i = prevChangedPosition + 1; i < tupleList.size(); i++) {
-            if (i == currentTuplePosition) {
+            if (i == currentTuplePosition && currentTuplePosition != 0) {
                 // 如果没找到要插入的位置，表示此元素多余，返回-2
                 return -2;
             }
