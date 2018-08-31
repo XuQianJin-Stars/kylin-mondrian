@@ -452,7 +452,7 @@ public class RolapResult extends ResultBase {
             } while (phase());
 
             // sort axes
-            if (XmlaRequestProperties.enableOptimizeMdx.get()) {
+            if (XmlaRequestProperties.shouldResortAxes.get()) {
                 AxesSortUtil axesSortUtil = new AxesSortUtil();
                 axesSortUtil.sortAxes(axes);
             }

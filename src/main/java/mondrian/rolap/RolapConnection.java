@@ -10,26 +10,61 @@
 */
 package mondrian.rolap;
 
-import mondrian.calc.*;
-import mondrian.olap.*;
-import mondrian.parser.MdxParserValidator;
-import mondrian.resource.MondrianResource;
-import mondrian.server.*;
-import mondrian.spi.*;
-import mondrian.util.*;
-
-import mondrian.xmla.XmlaRequestProperties;
-import org.apache.log4j.Logger;
-
-import org.olap4j.Scenario;
-
 import java.io.PrintWriter;
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
+
 import javax.sql.DataSource;
+
+import org.apache.log4j.Logger;
+import org.olap4j.Scenario;
+
+import mondrian.calc.TupleCollections;
+import mondrian.calc.TupleCursor;
+import mondrian.calc.TupleList;
+import mondrian.olap.CacheControl;
+import mondrian.olap.Cell;
+import mondrian.olap.ConnectionBase;
+import mondrian.olap.DriverManager;
+import mondrian.olap.Exp;
+import mondrian.olap.FunTable;
+import mondrian.olap.MondrianServer;
+import mondrian.olap.Position;
+import mondrian.olap.Query;
+import mondrian.olap.QueryAxis;
+import mondrian.olap.QueryCanceledException;
+import mondrian.olap.QueryPart;
+import mondrian.olap.QueryTimeoutException;
+import mondrian.olap.ResourceLimitExceededException;
+import mondrian.olap.Result;
+import mondrian.olap.ResultBase;
+import mondrian.olap.ResultLimitExceededException;
+import mondrian.olap.Role;
+import mondrian.olap.SchemaReader;
+import mondrian.olap.Util;
+import mondrian.parser.MdxParserValidator;
+import mondrian.resource.MondrianResource;
+import mondrian.server.Execution;
+import mondrian.server.Locus;
+import mondrian.server.Statement;
+import mondrian.server.StatementImpl;
+import mondrian.spi.DataServicesLocator;
+import mondrian.spi.DataServicesProvider;
+import mondrian.spi.Dialect;
+import mondrian.spi.DialectManager;
+import mondrian.util.LockBox;
+import mondrian.util.MemoryMonitor;
+import mondrian.util.MemoryMonitorFactory;
+import mondrian.util.Pair;
+import mondrian.xmla.XmlaRequestProperties;
 
 /**
  * A <code>RolapConnection</code> is a connection to a Mondrian OLAP Server.
@@ -44,8 +79,7 @@ import javax.sql.DataSource;
  * @since 2 October, 2002
  */
 public class RolapConnection extends ConnectionBase {
-    private static final Logger LOGGER =
-        Logger.getLogger(RolapConnection.class);
+    private static final Logger LOGGER = Logger.getLogger(RolapConnection.class);
     private static final AtomicInteger ID_GENERATOR = new AtomicInteger();
 
     private final MondrianServer server;
@@ -77,11 +111,7 @@ public class RolapConnection extends ConnectionBase {
      *   {@link RolapConnectionProperties}.
      * @param dataSource JDBC data source
      */
-    public RolapConnection(
-        MondrianServer server,
-        Util.PropertyList connectInfo,
-        DataSource dataSource)
-    {
+    public RolapConnection(MondrianServer server, Util.PropertyList connectInfo, DataSource dataSource) {
         this(server, connectInfo, null, dataSource);
     }
 
@@ -101,37 +131,24 @@ public class RolapConnection extends ConnectionBase {
      * @param dataSource If not null an external DataSource to be used
      *        by Mondrian
      */
-    RolapConnection(
-        MondrianServer server,
-        Util.PropertyList connectInfo,
-        RolapSchema schema,
-        DataSource dataSource)
-    {
+    RolapConnection(MondrianServer server, Util.PropertyList connectInfo, RolapSchema schema, DataSource dataSource) {
         super();
         assert server != null;
         this.server = server;
         this.id = ID_GENERATOR.getAndIncrement();
 
         assert connectInfo != null;
-        String provider = connectInfo.get(
-            RolapConnectionProperties.Provider.name(), "mondrian");
+        String provider = connectInfo.get(RolapConnectionProperties.Provider.name(), "mondrian");
         Util.assertTrue(provider.equalsIgnoreCase("mondrian"));
         this.connectInfo = connectInfo;
-        this.catalogUrl =
-            connectInfo.get(RolapConnectionProperties.Catalog.name());
-        final String jdbcUser =
-            connectInfo.get(RolapConnectionProperties.JdbcUser.name());
-        final String jdbcConnectString =
-            connectInfo.get(RolapConnectionProperties.Jdbc.name());
-        final String strDataSource =
-            connectInfo.get(RolapConnectionProperties.DataSource.name());
+        this.catalogUrl = connectInfo.get(RolapConnectionProperties.Catalog.name());
+        final String jdbcUser = connectInfo.get(RolapConnectionProperties.JdbcUser.name());
+        final String jdbcConnectString = connectInfo.get(RolapConnectionProperties.Jdbc.name());
+        final String strDataSource = connectInfo.get(RolapConnectionProperties.DataSource.name());
         StringBuilder buf = new StringBuilder();
-        DataServicesProvider dataServicesProvider =
-            DataServicesLocator.getDataServicesProvider(
-                connectInfo.get(
-                    RolapConnectionProperties.DataServicesProvider.name()));
-        this.dataSource =
-            dataServicesProvider.createDataSource(dataSource, connectInfo, buf);
+        DataServicesProvider dataServicesProvider = DataServicesLocator
+                .getDataServicesProvider(connectInfo.get(RolapConnectionProperties.DataServicesProvider.name()));
+        this.dataSource = dataServicesProvider.createDataSource(dataSource, connectInfo, buf);
         RolapSchema.RoleFactory roleFactory = null;
 
         // Register this connection before we register its internal statement.
@@ -143,45 +160,29 @@ public class RolapConnection extends ConnectionBase {
             // If RolapSchema.Pool.get were to call this with schema == null,
             // we would loop.
             Statement bootstrapStatement = createInternalStatement(false);
-            final Locus locus =
-                new Locus(
-                    new Execution(bootstrapStatement, 0),
-                    null,
-                    "Initializing connection");
+            final Locus locus = new Locus(new Execution(bootstrapStatement, 0), null, "Initializing connection");
             Locus.push(locus);
             try {
                 if (dataSource == null) {
                     // If there is no external data source is passed in, we
                     // expect the properties Jdbc, JdbcUser, DataSource to be
                     // set, as they are used to generate the schema cache key.
-                    final String connectionKey =
-                        jdbcConnectString
-                        + getJdbcProperties(connectInfo).toString();
+                    final String connectionKey = jdbcConnectString + getJdbcProperties(connectInfo).toString();
 
-                    schema = RolapSchemaPool.instance().get(
-                        catalogUrl,
-                        connectionKey,
-                        jdbcUser,
-                        strDataSource,
-                        connectInfo);
+                    schema = RolapSchemaPool.instance().get(catalogUrl, connectionKey, jdbcUser, strDataSource,
+                            connectInfo);
                 } else {
-                    schema = RolapSchemaPool.instance().get(
-                        catalogUrl,
-                        dataSource,
-                        connectInfo);
+                    schema = RolapSchemaPool.instance().get(catalogUrl, dataSource, connectInfo);
                 }
             } finally {
                 Locus.pop(locus);
                 bootstrapStatement.close();
             }
-            internalStatement =
-                schema.getInternalConnection().getInternalStatement();
-            String roleNameList =
-                connectInfo.get(RolapConnectionProperties.Role.name());
+            internalStatement = schema.getInternalConnection().getInternalStatement();
+            String roleNameList = connectInfo.get(RolapConnectionProperties.Role.name());
             if (roleNameList != null) {
                 List<String> roleNames = Util.parseCommaList(roleNameList);
-                List<RolapSchema.RoleFactory> roleList =
-                    new ArrayList<RolapSchema.RoleFactory>();
+                List<RolapSchema.RoleFactory> roleList = new ArrayList<RolapSchema.RoleFactory>();
                 for (String roleName : roleNames) {
                     roleList.add(getRoleFactory(server, schema, roleName));
                 }
@@ -211,22 +212,16 @@ public class RolapConnection extends ConnectionBase {
             Dialect dialect = null;
             try {
                 conn = this.dataSource.getConnection();
-                final String dialectClassName =
-                    connectInfo.get(RolapConnectionProperties.Dialect.name());
-                dialect = DialectManager.createDialect(
-                    this.dataSource, conn, dialectClassName);
-                if (dialect.getDatabaseProduct()
-                    == Dialect.DatabaseProduct.DERBY)
-                {
+                final String dialectClassName = connectInfo.get(RolapConnectionProperties.Dialect.name());
+                dialect = DialectManager.createDialect(this.dataSource, conn, dialectClassName);
+                if (dialect.getDatabaseProduct() == Dialect.DatabaseProduct.DERBY) {
                     // Derby requires a little extra prodding to do the
                     // validation to detect an error.
                     statement = conn.createStatement();
                     try {
                         statement.executeQuery("select * from bogustable");
                     } catch (SQLException e) {
-                        if (e.getMessage().equals(
-                                "Table/View 'BOGUSTABLE' does not exist."))
-                        {
+                        if (e.getMessage().equals("Table/View 'BOGUSTABLE' does not exist.")) {
                             // Ignore. This exception comes from Derby when the
                             // connection is valid. If the connection were
                             // invalid, we would receive an error such as
@@ -237,9 +232,7 @@ public class RolapConnection extends ConnectionBase {
                     }
                 }
             } catch (SQLException e) {
-                throw Util.newError(
-                    e,
-                    "Error while creating SQL connection: " + buf);
+                throw Util.newError(e, "Error while creating SQL connection: " + buf);
             } finally {
                 this.dialect = dialect;
                 Util.close(null, statement, conn);
@@ -251,8 +244,7 @@ public class RolapConnection extends ConnectionBase {
         }
 
         // Set the locale.
-        String localeString =
-            connectInfo.get(RolapConnectionProperties.Locale.name());
+        String localeString = connectInfo.get(RolapConnectionProperties.Locale.name());
         if (localeString != null) {
             this.locale = Util.parseLocale(localeString);
             assert locale != null;
@@ -261,27 +253,17 @@ public class RolapConnection extends ConnectionBase {
         this.schema = schema;
         final Map<String, Object> context = new HashMap<String, Object>();
         for (Pair<String, String> pair : connectInfo) {
-            if (pair.left.startsWith(
-                    RolapConnectionProperties.RolePropertyPrefix))
-            {
-                context.put(
-                    pair.left.substring(
-                        RolapConnectionProperties.RolePropertyPrefix.length()),
-                    pair.right);
+            if (pair.left.startsWith(RolapConnectionProperties.RolePropertyPrefix)) {
+                context.put(pair.left.substring(RolapConnectionProperties.RolePropertyPrefix.length()), pair.right);
             }
         }
         Role role = roleFactory.create(context);
         setRole(role);
     }
 
-    private RolapSchema.RoleFactory getRoleFactory(
-        MondrianServer server,
-        RolapSchema schema,
-        String roleName)
-    {
+    private RolapSchema.RoleFactory getRoleFactory(MondrianServer server, RolapSchema schema, String roleName) {
         // First look in lock-box
-        final LockBox.Entry entry =
-            server.getLockBox().get(roleName);
+        final LockBox.Entry entry = server.getLockBox().get(roleName);
         if (entry != null) {
             try {
                 final Object value = entry.getValue();
@@ -296,8 +278,7 @@ public class RolapConnection extends ConnectionBase {
         }
 
         // Now look up role factory in schema
-        RolapSchema.RoleFactory factory =
-            schema.mapNameToRole.get(roleName);
+        RolapSchema.RoleFactory factory = schema.mapNameToRole.get(roleName);
         if (factory != null) {
             return factory;
         }
@@ -310,10 +291,7 @@ public class RolapConnection extends ConnectionBase {
             super.finalize();
             close();
         } catch (Throwable t) {
-            LOGGER.info(
-                MondrianResource.instance()
-                    .FinalizerErrorRolapConnection.baseMessage,
-                t);
+            LOGGER.info(MondrianResource.instance().FinalizerErrorRolapConnection.baseMessage, t);
         }
     }
 
@@ -342,13 +320,9 @@ public class RolapConnection extends ConnectionBase {
     static Properties getJdbcProperties(Util.PropertyList connectInfo) {
         Properties jdbcProperties = new Properties();
         for (Pair<String, String> entry : connectInfo) {
-            if (entry.left.startsWith(
-                    RolapConnectionProperties.JdbcPropertyPrefix))
-            {
-                jdbcProperties.put(
-                    entry.left.substring(
-                        RolapConnectionProperties.JdbcPropertyPrefix.length()),
-                    entry.right);
+            if (entry.left.startsWith(RolapConnectionProperties.JdbcPropertyPrefix)) {
+                jdbcProperties.put(entry.left.substring(RolapConnectionProperties.JdbcPropertyPrefix.length()),
+                        entry.right);
             }
         }
         return jdbcProperties;
@@ -395,8 +369,7 @@ public class RolapConnection extends ConnectionBase {
     public Object getProperty(String name) {
         // Mask out the values of certain properties.
         if (name.equals(RolapConnectionProperties.JdbcPassword.name())
-            || name.equals(RolapConnectionProperties.CatalogContent.name()))
-        {
+                || name.equals(RolapConnectionProperties.CatalogContent.name())) {
             return "";
         }
         return connectInfo.get(name);
@@ -422,8 +395,7 @@ public class RolapConnection extends ConnectionBase {
      */
     public Result execute(Query query) {
         final Statement statement = query.getStatement();
-        Execution execution =
-            new Execution(statement, statement.getQueryTimeoutMillis());
+        Execution execution = new Execution(statement, statement.getQueryTimeoutMillis());
         return execute(execution);
     }
 
@@ -440,31 +412,38 @@ public class RolapConnection extends ConnectionBase {
      */
     public Result execute(final Execution execution) {
         execution.copyMDC();
-        final boolean enableOptimizeMdx = XmlaRequestProperties.enableOptimizeMdx.get();
-        XmlaRequestProperties.enableOptimizeMdx.remove();
+        Boolean enableOptimizeMdx = XmlaRequestProperties.enableOptimizeMdx.get();
+        Boolean needCalculateTotal = XmlaRequestProperties.needCalculateTotal.get();
+        boolean flag;
+        if (enableOptimizeMdx != null && enableOptimizeMdx) {
+            flag = (needCalculateTotal != null && needCalculateTotal) ? true : false;
+        } else {
+            flag = false;
+        }
+
+        final boolean shouldResortAxes = flag;
         return
             server.getResultShepherd()
                 .shepherdExecution(
                     execution,
                     new Callable<Result>() {
                         public Result call() throws Exception {
-                            return executeInternal(execution, enableOptimizeMdx);
+                            return executeInternal(execution, shouldResortAxes);
                         }
                     });
     }
 
-    private Result executeInternal(final Execution execution, final boolean enableOptimizeMdx) {
+    private Result executeInternal(final Execution execution, final boolean shouldResortAxes) {
         execution.setContextMap();
 
         // set current schema
         RolapSchemaProvider.setCurrentSchema(this.schema);
-        XmlaRequestProperties.enableOptimizeMdx.set(enableOptimizeMdx);
+        XmlaRequestProperties.shouldResortAxes.set(shouldResortAxes);
 
         final Statement statement = execution.getMondrianStatement();
         // Cleanup any previous executions still running
         synchronized (statement) {
-            final Execution previousExecution =
-                statement.getCurrentExecution();
+            final Execution previousExecution = statement.getCurrentExecution();
             if (previousExecution != null) {
                 statement.end(previousExecution);
             }
@@ -473,12 +452,7 @@ public class RolapConnection extends ConnectionBase {
         final MemoryMonitor.Listener listener = new MemoryMonitor.Listener() {
             public void memoryUsageNotification(long used, long max) {
                 execution.setOutOfMemory(
-                    "OutOfMemory used="
-                    + used
-                    + ", max="
-                    + max
-                    + " for connection: "
-                    + getConnectString());
+                        "OutOfMemory used=" + used + ", max=" + max + " for connection: " + getConnectString());
             }
         };
         MemoryMonitor mm = MemoryMonitorFactory.getMemoryMonitor();
@@ -540,15 +514,12 @@ public class RolapConnection extends ConnectionBase {
             } catch (Exception e1) {
                 queryString = "?";
             }
-            throw Util.newError(
-                e,
-                "Error while executing query [" + queryString + "]");
+            throw Util.newError(e, "Error while executing query [" + queryString + "]");
         } finally {
             mm.removeListener(listener);
             if (RolapUtil.MDX_LOGGER.isDebugEnabled()) {
                 final long elapsed = execution.getElapsedMillis();
-                RolapUtil.MDX_LOGGER.debug(
-                    currId + ": exec: " + elapsed + " ms");
+                RolapUtil.MDX_LOGGER.debug(currId + ": exec: " + elapsed + " ms");
             }
         }
     }
@@ -586,15 +557,10 @@ public class RolapConnection extends ConnectionBase {
 
     public QueryPart parseStatement(String query) {
         Statement statement = createInternalStatement(false);
-        final Locus locus =
-            new Locus(
-                new Execution(statement, 0),
-                "Parse/validate MDX statement",
-                null);
+        final Locus locus = new Locus(new Execution(statement, 0), "Parse/validate MDX statement", null);
         Locus.push(locus);
         try {
-            QueryPart queryPart =
-                parseStatement(statement, query, null, false);
+            QueryPart queryPart = parseStatement(statement, query, null, false);
             if (queryPart instanceof Query) {
                 ((Query) queryPart).setOwnStatement(true);
                 statement = null;
@@ -612,9 +578,7 @@ public class RolapConnection extends ConnectionBase {
         boolean debug = false;
         if (getLogger().isDebugEnabled()) {
             //debug = true;
-            getLogger().debug(
-                Util.nl
-                + expr);
+            getLogger().debug(Util.nl + expr);
         }
         final Statement statement = getInternalStatement();
         try {
@@ -622,9 +586,7 @@ public class RolapConnection extends ConnectionBase {
             final FunTable funTable = getSchema().getFunTable();
             return parser.parseExpression(statement, expr, debug, funTable);
         } catch (Throwable exception) {
-            throw MondrianResource.instance().FailedToParseQuery.ex(
-                expr,
-                exception);
+            throw MondrianResource.instance().FailedToParseQuery.ex(expr, exception);
         }
     }
 
@@ -637,10 +599,7 @@ public class RolapConnection extends ConnectionBase {
     }
 
     private Statement createInternalStatement(boolean reentrant) {
-        final Statement statement =
-            reentrant
-                ? new ReentrantInternalStatement()
-                : new InternalStatement();
+        final Statement statement = reentrant ? new ReentrantInternalStatement() : new InternalStatement();
         server.addStatement(statement);
         return statement;
     }
@@ -656,17 +615,13 @@ public class RolapConnection extends ConnectionBase {
      * @return new Scenario
      */
     public ScenarioImpl createScenario() {
-        return Locus.execute(
-            this,
-            "createScenario",
-            new Locus.Action<ScenarioImpl>() {
-                public ScenarioImpl execute() {
-                    final ScenarioImpl scenario = new ScenarioImpl();
-                    scenario.register(schema);
-                    return scenario;
-                }
+        return Locus.execute(this, "createScenario", new Locus.Action<ScenarioImpl>() {
+            public ScenarioImpl execute() {
+                final ScenarioImpl scenario = new ScenarioImpl();
+                scenario.register(schema);
+                return scenario;
             }
-        );
+        });
     }
 
     /**
@@ -697,17 +652,15 @@ public class RolapConnection extends ConnectionBase {
             int axisCount = underlying.getAxes().length;
             this.pos = new int[axisCount];
             this.slicerAxis = underlying.getSlicerAxis();
-            TupleList tupleList =
-                ((RolapAxis) underlying.getAxes()[axis]).getTupleList();
+            TupleList tupleList = ((RolapAxis) underlying.getAxes()[axis]).getTupleList();
 
             final TupleList filteredTupleList;
-            filteredTupleList =
-                TupleCollections.createList(tupleList.getArity());
+            filteredTupleList = TupleCollections.createList(tupleList.getArity());
             int i = -1;
             TupleCursor tupleCursor = tupleList.tupleCursor();
             while (tupleCursor.forward()) {
                 ++i;
-                if (! isEmpty(i, axis)) {
+                if (!isEmpty(i, axis)) {
                     map.put(filteredTupleList.size(), i);
                     filteredTupleList.addCurrent(tupleCursor);
                 }
@@ -755,8 +708,7 @@ public class RolapConnection extends ConnectionBase {
         // synchronized because we use 'pos'
         public synchronized Cell getCell(int[] externalPos) {
             try {
-                System.arraycopy(
-                    externalPos, 0, this.pos, 0, externalPos.length);
+                System.arraycopy(externalPos, 0, this.pos, 0, externalPos.length);
                 int offset = externalPos[axis];
                 int mappedOffset = mapOffsetToUnderlying(offset);
                 this.pos[axis] = mappedOffset;

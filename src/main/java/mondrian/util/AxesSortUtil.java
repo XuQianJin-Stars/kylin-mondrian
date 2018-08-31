@@ -55,7 +55,13 @@ public class AxesSortUtil {
             List<Member> tuple = tupleList.get(i);
             int allMemIdxOfTuple = -1;
             if ((allMemIdxOfTuple = allMemIdxOfTuple(tuple)) != -1) {
-                prevChangedPosition = changeTuplePosition(tuple, tupleList, i, prevChangedPosition, allMemIdxOfTuple);
+                int changedPosition = changeTuplePosition(tuple, tupleList, i, prevChangedPosition, allMemIdxOfTuple);
+                if (changedPosition == -2) {
+                    tupleList.remove(i);
+                    i--;
+                } else {
+                    prevChangedPosition = changedPosition;
+                }
             }
         }
         return new RolapAxis(tupleList);
@@ -88,6 +94,10 @@ public class AxesSortUtil {
     private int changeTuplePosition(List<Member> tuple, TupleList tupleList, int currentTuplePosition,
             int prevChangedPosition, int allMemIdxOfTuple) {
         for (int i = prevChangedPosition + 1; i < tupleList.size(); i++) {
+            if (i == currentTuplePosition) {
+                // 如果没找到要插入的位置，表示此元素多余，返回-2
+                return -2;
+            }
             if (shouldInsertBefore(tuple, tupleList.get(i), allMemIdxOfTuple)) {
                 tupleList.remove(currentTuplePosition);
                 tupleList.add(i, tuple);
@@ -108,6 +118,7 @@ public class AxesSortUtil {
                 return false;
             }
         }
+
         return true;
     }
 
