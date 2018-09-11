@@ -545,16 +545,24 @@ public class SqlQuery {
             LinkedList<List<RolapSchema.PhysLink>> sortedLinks = new LinkedList<List<RolapSchema.PhysLink>>();
 
             // near fact table first
-            for (Map.Entry<RolapSchema.PhysRelation, List<RolapSchema.PhysLink>> entry : linkMap.entrySet()) {
-                RolapSchema.PhysTable table = (RolapSchema.PhysTable) entry.getKey();
-                List<RolapSchema.PhysLink> links = entry.getValue();
-                if (table.getSchemaName().equals(factTable.getSchemaName())
-                        && table.getName().equals(factTable.getName())) {
-                    sortedLinks.addFirst(links);
-                } else {
-                    sortedLinks.addLast(links);
+//            for (Map.Entry<RolapSchema.PhysRelation, List<RolapSchema.PhysLink>> entry : linkMap.entrySet()) {
+//                RolapSchema.PhysTable table = (RolapSchema.PhysTable) entry.getKey();
+//                List<RolapSchema.PhysLink> links = entry.getValue();
+//                if (table.getSchemaName().equals(factTable.getSchemaName())
+//                        && table.getName().equals(factTable.getName())) {
+//                    sortedLinks.addFirst(links);
+//                } else {
+//                    sortedLinks.addLast(links);
+//                }
+//            }
+            for(RolapSchema.PhysRelation physTable : tablesRelations) {
+                List<RolapSchema.PhysLink> physLinks = linkMap.get(physTable);
+                if (physLinks != null && physLinks.size() != 0) {
+                    sortedLinks.add(physLinks);
                 }
             }
+
+
             for (List<RolapSchema.PhysLink> links : sortedLinks) {
                 for (RolapSchema.PhysLink link : links) {
                     fromClauseList.add(generateJoinClauseStr((RolapSchema.PhysTable) link.getTo(), link));
