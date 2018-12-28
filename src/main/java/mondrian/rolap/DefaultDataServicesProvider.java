@@ -9,23 +9,29 @@
 */
 package mondrian.rolap;
 
-import mondrian.olap.*;
-import mondrian.resource.MondrianResource;
-import mondrian.rolap.agg.*;
-import mondrian.rolap.aggmatcher.JdbcSchema;
-import mondrian.rolap.sql.TupleConstraint;
-import mondrian.spi.*;
-import mondrian.spi.impl.JndiDataSourceResolver;
-import mondrian.util.ClassResolver;
+import java.io.PrintWriter;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.Map;
+import java.util.Properties;
+
+import javax.sql.DataSource;
 
 import org.eigenbase.util.property.StringProperty;
 
-import java.io.PrintWriter;
-import java.lang.reflect.*;
-import java.sql.*;
-import java.sql.Connection;
-import java.util.*;
-import javax.sql.DataSource;
+import mondrian.olap.MondrianProperties;
+import mondrian.olap.Util;
+import mondrian.resource.MondrianResource;
+import mondrian.rolap.agg.SegmentCacheManager;
+import mondrian.rolap.agg.SegmentLoader;
+import mondrian.rolap.aggmatcher.JdbcSchema;
+import mondrian.rolap.sql.TupleConstraint;
+import mondrian.spi.DataServicesProvider;
+import mondrian.spi.DataSourceResolver;
+import mondrian.spi.impl.JndiDataSourceResolver;
+import mondrian.util.ClassResolver;
 
 /**
  * Default implementation of DataServicesProvider
@@ -51,14 +57,12 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
         if (factory != null) {
             return factory;
         }
-        String className =
-            MondrianProperties.instance().JdbcFactoryClass.get();
+        String className = MondrianProperties.instance().JdbcFactoryClass.get();
         if (className == null) {
             factory = new StdFactory();
         } else {
             try {
-                Class<?> clz =
-                    ClassResolver.INSTANCE.forName(className, true);
+                Class<?> clz = ClassResolver.INSTANCE.forName(className, true);
                 factory = (JdbcSchema.Factory) clz.newInstance();
             } catch (ClassNotFoundException ex) {
                 throw mres.BadJdbcFactoryClassName.ex(className);
@@ -74,6 +78,7 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
     protected static class StdFactory implements JdbcSchema.Factory {
         StdFactory() {
         }
+
         public JdbcSchema loadDatabase(DataSource dataSource) {
             return new JdbcSchema(dataSource);
         }
@@ -91,57 +96,36 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
      * @param buf Into which method writes a description of the JDBC credentials
      * @return Data source
      */
-    public DataSource createDataSource(
-        DataSource dataSource,
-        Util.PropertyList connectInfo,
-        StringBuilder buf)
-    {
+    public DataSource createDataSource(DataSource dataSource, Util.PropertyList connectInfo, StringBuilder buf) {
         assert buf != null;
-        final String jdbcConnectString =
-            connectInfo.get(RolapConnectionProperties.Jdbc.name());
-        final String jdbcUser =
-            connectInfo.get(RolapConnectionProperties.JdbcUser.name());
-        final String jdbcPassword =
-            connectInfo.get(RolapConnectionProperties.JdbcPassword.name());
-        final String dataSourceName =
-            connectInfo.get(RolapConnectionProperties.DataSource.name());
+        final String jdbcConnectString = connectInfo.get(RolapConnectionProperties.Jdbc.name());
+        final String jdbcUser = connectInfo.get(RolapConnectionProperties.JdbcUser.name());
+        final String jdbcPassword = connectInfo.get(RolapConnectionProperties.JdbcPassword.name());
+        final String dataSourceName = connectInfo.get(RolapConnectionProperties.DataSource.name());
+        final String ssl = connectInfo.get(RolapConnectionProperties.ssl.name());
 
         if (dataSource != null) {
             appendKeyValue(buf, "Anonymous data source", dataSource);
-            appendKeyValue(
-                buf, RolapConnectionProperties.JdbcUser.name(), jdbcUser);
-            appendKeyValue(
-                buf,
-                RolapConnectionProperties.JdbcPassword.name(),
-                jdbcPassword);
+            appendKeyValue(buf, RolapConnectionProperties.JdbcUser.name(), jdbcUser);
+            appendKeyValue(buf, RolapConnectionProperties.JdbcPassword.name(), jdbcPassword);
             if (jdbcUser != null || jdbcPassword != null) {
-                dataSource =
-                    new UserPasswordDataSource(
-                        dataSource, jdbcUser, jdbcPassword);
+                dataSource = new UserPasswordDataSource(dataSource, jdbcUser, jdbcPassword);
             }
             return dataSource;
-
         } else if (jdbcConnectString != null) {
             // Get connection through own pooling datasource
-            appendKeyValue(
-                buf, RolapConnectionProperties.Jdbc.name(), jdbcConnectString);
-            appendKeyValue(
-                buf, RolapConnectionProperties.JdbcUser.name(), jdbcUser);
-            appendKeyValue(
-                buf,
-                RolapConnectionProperties.JdbcPassword.name(),
-                jdbcPassword);
-            String jdbcDrivers =
-                connectInfo.get(RolapConnectionProperties.JdbcDrivers.name());
+            appendKeyValue(buf, RolapConnectionProperties.Jdbc.name(), jdbcConnectString);
+            appendKeyValue(buf, RolapConnectionProperties.JdbcUser.name(), jdbcUser);
+            appendKeyValue(buf, RolapConnectionProperties.JdbcPassword.name(), jdbcPassword);
+            String jdbcDrivers = connectInfo.get(RolapConnectionProperties.JdbcDrivers.name());
             if (jdbcDrivers != null) {
                 RolapUtil.loadDrivers(jdbcDrivers);
             }
-            final String jdbcDriversProp =
-                    MondrianProperties.instance().JdbcDrivers.get();
-            RolapUtil.loadDrivers(jdbcDriversProp);
+            //            final String jdbcDriversProp =
+            //                    MondrianProperties.instance().JdbcDrivers.get();
+            //            RolapUtil.loadDrivers(jdbcDriversProp);
 
-            Properties jdbcProperties =
-                RolapConnection.getJdbcProperties(connectInfo);
+            Properties jdbcProperties = RolapConnection.getJdbcProperties(connectInfo);
             final Map<String, String> map = Util.toMap(jdbcProperties);
             for (Map.Entry<String, String> entry : map.entrySet()) {
                 // FIXME ordering is non-deterministic
@@ -154,76 +138,52 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
             if (jdbcPassword != null) {
                 jdbcProperties.put("password", jdbcPassword);
             }
+            if (ssl != null) {
+                jdbcProperties.put("ssl", ssl);
+            }
 
             // JDBC connections are dumb beasts, so we assume they're not
             // pooled. Therefore the default is true.
-            final boolean poolNeeded =
-                connectInfo.get(
-                    RolapConnectionProperties.PoolNeeded.name(),
-                    "true").equalsIgnoreCase("true");
+            final boolean poolNeeded = connectInfo.get(RolapConnectionProperties.PoolNeeded.name(), "true")
+                    .equalsIgnoreCase("true");
 
             if (!poolNeeded) {
                 // Connection is already pooled; don't pool it again.
-                return new DriverManagerDataSource(
-                    jdbcConnectString,
-                    jdbcProperties);
+                return new DriverManagerDataSource(jdbcConnectString, jdbcProperties);
             }
 
-            return RolapConnectionPool.instance()
-                .getDriverManagerPoolingDataSource(
-                    jdbcConnectString,
-                    jdbcProperties,
+            return RolapConnectionPool.instance().getDriverManagerPoolingDataSource(jdbcConnectString, jdbcProperties,
                     jdbcConnectString.toLowerCase().indexOf("mysql") > -1);
 
         } else if (dataSourceName != null) {
-            appendKeyValue(
-                buf,
-                RolapConnectionProperties.DataSource.name(),
-                dataSourceName);
-            appendKeyValue(
-                buf,
-                RolapConnectionProperties.JdbcUser.name(),
-                jdbcUser);
-            appendKeyValue(
-                buf,
-                RolapConnectionProperties.JdbcPassword.name(),
-                jdbcPassword);
+            appendKeyValue(buf, RolapConnectionProperties.DataSource.name(), dataSourceName);
+            appendKeyValue(buf, RolapConnectionProperties.JdbcUser.name(), jdbcUser);
+            appendKeyValue(buf, RolapConnectionProperties.JdbcPassword.name(), jdbcPassword);
 
             // Data sources are fairly smart, so we assume they look after
             // their own pooling. Therefore the default is false.
-            final boolean poolNeeded =
-                connectInfo.get(
-                    RolapConnectionProperties.PoolNeeded.name(),
-                    "false").equalsIgnoreCase("true");
+            final boolean poolNeeded = connectInfo.get(RolapConnectionProperties.PoolNeeded.name(), "false")
+                    .equalsIgnoreCase("true");
 
             // Get connection from datasource.
             DataSourceResolver dataSourceResolver = getDataSourceResolver();
             try {
                 dataSource = dataSourceResolver.lookup(dataSourceName);
             } catch (Exception e) {
-                throw Util.newInternal(
-                    e,
-                    "Error while looking up data source ("
-                    + dataSourceName + ")");
+                throw Util.newInternal(e, "Error while looking up data source (" + dataSourceName + ")");
             }
             if (poolNeeded) {
-                dataSource =
-                    RolapConnectionPool.instance()
-                        .getDataSourcePoolingDataSource(
-                            dataSource, dataSourceName, jdbcUser, jdbcPassword);
+                dataSource = RolapConnectionPool.instance().getDataSourcePoolingDataSource(dataSource, dataSourceName,
+                        jdbcUser, jdbcPassword);
             } else {
                 if (jdbcUser != null || jdbcPassword != null) {
-                    dataSource =
-                        new UserPasswordDataSource(
-                            dataSource, jdbcUser, jdbcPassword);
+                    dataSource = new UserPasswordDataSource(dataSource, jdbcUser, jdbcPassword);
                 }
             }
             return dataSource;
         } else {
-            throw Util.newInternal(
-                "Connect string '" + connectInfo.toString()
-                + "' must contain either '" + RolapConnectionProperties.Jdbc
-                + "' or '" + RolapConnectionProperties.DataSource + "'");
+            throw Util.newInternal("Connect string '" + connectInfo.toString() + "' must contain either '"
+                    + RolapConnectionProperties.Jdbc + "' or '" + RolapConnectionProperties.DataSource + "'");
         }
     }
 
@@ -235,21 +195,13 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
      */
     private static synchronized DataSourceResolver getDataSourceResolver() {
         if (dataSourceResolver == null) {
-            final StringProperty property =
-                MondrianProperties.instance().DataSourceResolverClass;
-            final String className =
-                property.get(
-                    JndiDataSourceResolver.class.getName());
+            final StringProperty property = MondrianProperties.instance().DataSourceResolverClass;
+            final String className = property.get(JndiDataSourceResolver.class.getName());
             try {
-                dataSourceResolver =
-                    ClassResolver.INSTANCE.instantiateSafe(className);
+                dataSourceResolver = ClassResolver.INSTANCE.instantiateSafe(className);
             } catch (ClassCastException e) {
-                throw Util.newInternal(
-                    e,
-                    "Plugin class specified by property "
-                    + property.getPath()
-                    + " must implement "
-                    + DataSourceResolver.class.getName());
+                throw Util.newInternal(e, "Plugin class specified by property " + property.getPath()
+                        + " must implement " + DataSourceResolver.class.getName());
             }
         }
         return dataSourceResolver;
@@ -262,11 +214,7 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
      * @param key Key
      * @param value Value
      */
-    private static void appendKeyValue(
-        StringBuilder buf,
-        String key,
-        Object value)
-    {
+    private static void appendKeyValue(StringBuilder buf, String key, Object value) {
         if (value != null) {
             if (buf.length() > 0) {
                 buf.append("; ");
@@ -274,8 +222,6 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
             buf.append(key).append('=').append(value);
         }
     }
-
-
 
     /**
      * Data source that gets connections from an underlying data source but
@@ -292,11 +238,7 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
          * @param jdbcUser User name
          * @param jdbcPassword Password
          */
-        public UserPasswordDataSource(
-            DataSource dataSource,
-            String jdbcUser,
-            String jdbcPassword)
-        {
+        public UserPasswordDataSource(DataSource dataSource, String jdbcUser, String jdbcPassword) {
             super(dataSource);
             this.jdbcUser = jdbcUser;
             this.jdbcPassword = jdbcPassword;
@@ -320,10 +262,7 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
         private int loginTimeout;
         private Properties jdbcProperties;
 
-        public DriverManagerDataSource(
-            String jdbcConnectString,
-            Properties properties)
-        {
+        public DriverManagerDataSource(String jdbcConnectString, Properties properties) {
             this.jdbcConnectString = jdbcConnectString;
             this.jdbcProperties = properties;
         }
@@ -339,33 +278,26 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
         @Override
         public boolean equals(Object obj) {
             if (obj instanceof DriverManagerDataSource) {
-                DriverManagerDataSource
-                    that = (DriverManagerDataSource) obj;
-                return this.loginTimeout == that.loginTimeout
-                    && this.jdbcConnectString.equals(that.jdbcConnectString)
-                    && this.jdbcProperties.equals(that.jdbcProperties);
+                DriverManagerDataSource that = (DriverManagerDataSource) obj;
+                return this.loginTimeout == that.loginTimeout && this.jdbcConnectString.equals(that.jdbcConnectString)
+                        && this.jdbcProperties.equals(that.jdbcProperties);
             }
             return false;
         }
 
         public Connection getConnection() throws SQLException {
             return new org.apache.commons.dbcp.DelegatingConnection(
-                java.sql.DriverManager.getConnection(
-                    jdbcConnectString, jdbcProperties));
+                    java.sql.DriverManager.getConnection(jdbcConnectString, jdbcProperties));
         }
 
-        public Connection getConnection(String username, String password)
-            throws SQLException
-        {
+        public Connection getConnection(String username, String password) throws SQLException {
             if (jdbcProperties == null) {
-                return java.sql.DriverManager.getConnection(
-                    jdbcConnectString, username, password);
+                return java.sql.DriverManager.getConnection(jdbcConnectString, username, password);
             } else {
-                Properties temp = (Properties)jdbcProperties.clone();
+                Properties temp = (Properties) jdbcProperties.clone();
                 temp.put("user", username);
                 temp.put("password", password);
-                return java.sql.DriverManager.getConnection(
-                    jdbcConnectString, temp);
+                return java.sql.DriverManager.getConnection(jdbcConnectString, temp);
             }
         }
 
@@ -412,11 +344,7 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
             return dataSource.getConnection();
         }
 
-        public Connection getConnection(
-            String username,
-            String password)
-            throws SQLException
-        {
+        public Connection getConnection(String username, String password) throws SQLException {
             return dataSource.getConnection(username, password);
         }
 
@@ -443,8 +371,7 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
                 //              return dataSource.unwrap(iface);
                 // via reflection.
                 try {
-                    Method method =
-                        DataSource.class.getMethod("unwrap", Class.class);
+                    Method method = DataSource.class.getMethod("unwrap", Class.class);
                     return iface.cast(method.invoke(dataSource, iface));
                 } catch (IllegalAccessException e) {
                     throw Util.newInternal(e, "While invoking unwrap");
@@ -469,9 +396,7 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
                 //              return dataSource.isWrapperFor(iface);
                 // via reflection.
                 try {
-                    Method method =
-                        DataSource.class.getMethod(
-                            "isWrapperFor", boolean.class);
+                    Method method = DataSource.class.getMethod("isWrapperFor", boolean.class);
                     return (Boolean) method.invoke(dataSource, iface);
                 } catch (IllegalAccessException e) {
                     throw Util.newInternal(e, "While invoking isWrapperFor");
@@ -492,8 +417,7 @@ public class DefaultDataServicesProvider implements DataServicesProvider {
                 //              return dataSource.getParentLogger();
                 // via reflection.
                 try {
-                    Method method =
-                        DataSource.class.getMethod("getParentLogger");
+                    Method method = DataSource.class.getMethod("getParentLogger");
                     return (java.util.logging.Logger) method.invoke(dataSource);
                 } catch (IllegalAccessException e) {
                     throw Util.newInternal(e, "While invoking getParentLogger");

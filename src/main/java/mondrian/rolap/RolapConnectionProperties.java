@@ -191,6 +191,8 @@ public enum RolapConnectionProperties {
      */
     JdbcConnectionUuid,
 
+    ssl,
+
     /**
      * The "DataServicesProvider" property specifies the full class name for
      * the {@link mondrian.spi.DataServicesProvider} implementation to be used
