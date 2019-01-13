@@ -176,24 +176,25 @@ public class SmartMemberReader implements MemberReader {
         List<RolapMember> children,
         MemberChildrenConstraint constraint)
     {
-        synchronized (cacheHelper) {
-            List<RolapMember> missed = new ArrayList<RolapMember>();
-            for (RolapMember parentMember : parentMembers) {
-                List<RolapMember> list =
-                    cacheHelper.getChildrenFromCache(parentMember, constraint);
-                if (list == null) {
-                    // the null member has no children
-                    if (!parentMember.isNull()) {
-                        missed.add(parentMember);
-                    }
-                } else {
-                    children.addAll(list);
-                }
-            }
-            if (missed.size() > 0) {
-                readMemberChildren(missed, children, constraint);
-            }
-        }
+        readMemberChildren(parentMembers, children, constraint);
+//        synchronized (cacheHelper) {
+//            List<RolapMember> missed = new ArrayList<RolapMember>();
+//            for (RolapMember parentMember : parentMembers) {
+//                List<RolapMember> list =
+//                    cacheHelper.getChildrenFromCache(parentMember, constraint);
+//                if (list == null || list.size() == 0) {
+//                    // the null member has no children
+//                    if (!parentMember.isNull()) {
+//                        missed.add(parentMember);
+//                    }
+//                } else {
+//                    children.addAll(list);
+//                }
+//            }
+//            if (missed.size() > 0) {
+//                readMemberChildren(missed, children, constraint);
+//            }
+//        }
     }
 
     public RolapMember lookupMember(
@@ -260,19 +261,19 @@ public class SmartMemberReader implements MemberReader {
             ((List)list).add(child);
             ((List)result).add(child);
         }
-        synchronized (cacheHelper) {
-            for (Map.Entry<RolapMember, List<RolapMember>> entry
-                : tempMap.entrySet())
-            {
-                final RolapMember member = entry.getKey();
-                if (cacheHelper.getChildrenFromCache(member, constraint)
-                    == null)
-                {
-                    final List<RolapMember> list = entry.getValue();
-                    cacheHelper.putChildren(member, constraint, list);
-                }
-            }
-        }
+//        synchronized (cacheHelper) {
+//            for (Map.Entry<RolapMember, List<RolapMember>> entry
+//                : tempMap.entrySet())
+//            {
+//                final RolapMember member = entry.getKey();
+//                if (cacheHelper.getChildrenFromCache(member, constraint)
+//                    == null)
+//                {
+//                    final List<RolapMember> list = entry.getValue();
+//                    cacheHelper.putChildren(member, constraint, list);
+//                }
+//            }
+//        }
     }
 
     /**

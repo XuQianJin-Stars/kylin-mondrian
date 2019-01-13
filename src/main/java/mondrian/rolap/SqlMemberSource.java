@@ -73,8 +73,6 @@ public class SqlMemberSource implements MemberReader, SqlTupleReader.MemberBuild
     private MemberCache cache;
     private int lastOrdinal = 0;
     private final Map<Object, Object> valuePool;
-    private static Cache<String, List<RolapMember>> MEMBERS_CACHE = CacheBuilder.newBuilder()
-            .expireAfterWrite(5, TimeUnit.MINUTES).maximumSize(100).build();
 
     SqlMemberSource(RolapCubeHierarchy hierarchy) {
         this.hierarchy = hierarchy;
@@ -907,11 +905,6 @@ public class SqlMemberSource implements MemberReader, SqlTupleReader.MemberBuild
         if (sql == null) {
             return;
         }
-        List<RolapMember> members = MEMBERS_CACHE.getIfPresent(sql);
-        if (members != null && members.size() != 0) {
-            children.addAll(members);
-            return;
-        }
 
         final List<SqlStatement.Type> types = layoutBuilder.types;
         SqlStatement stmt =
@@ -1008,7 +1001,6 @@ public class SqlMemberSource implements MemberReader, SqlTupleReader.MemberBuild
                 }
                 children.add(member);
             }
-            MEMBERS_CACHE.put(sql, children);
         } catch (SQLException e) {
             throw stmt.handle(e);
         } finally {
