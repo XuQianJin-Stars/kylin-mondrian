@@ -58,6 +58,26 @@ maximum size of a result set.
         <Default>0</Default>
     </PropertyDefinition>
     <PropertyDefinition>
+        <Name>SqlCache</Name>
+        <Path>mondrian.sql.cache.enable</Path>
+        <Description>
+            Integer property that, if set to a value greater than zero, limits the
+            maximum size of a result set.
+        </Description>
+        <Type>boolean</Type>
+        <Default>true</Default>
+    </PropertyDefinition>
+    <PropertyDefinition>
+        <Name>SegmentLoadingCache</Name>
+        <Path>mondrian.segment.cache.enable</Path>
+        <Description>
+            Integer property that, if set to a value greater than zero, limits the
+            maximum size of a result set.
+        </Description>
+        <Type>boolean</Type>
+        <Default>true</Default>
+    </PropertyDefinition>
+    <PropertyDefinition>
         <Name>TestName</Name>
         <Path>mondrian.test.Name</Path>
         <Category>Testing</Category>

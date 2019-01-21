@@ -187,11 +187,12 @@ public class SegmentLoader {
             Pair<String, List<SqlStatement.Type>> pair = AggregationManager.generateSql(groupingSetsList,
                     compoundPredicateList);
 
-            Map<Segment, SegmentWithData> cachedSegment = SEGMENT_CACHE.getIfPresent(pair.left);
-            if (cachedSegment != null) {
-                return cachedSegment;
+            if (MondrianProperties.instance().SegmentLoadingCache.get()) {
+                Map<Segment, SegmentWithData> cachedSegment = SEGMENT_CACHE.getIfPresent(pair.left);
+                if (cachedSegment != null) {
+                    return cachedSegment;
+                }
             }
-
             stmt = createExecuteSql(cellRequestCount, groupingSetsList, compoundPredicateList);
 
             if (stmt == null) {
@@ -212,7 +213,9 @@ public class SegmentLoader {
 
             setDataToSegments(this.cacheMgr, groupingSetsList, groupingDataSetsMap, segmentMap);
 
-            SEGMENT_CACHE.put(pair.left, segmentMap);
+            if (MondrianProperties.instance().SegmentLoadingCache.get()) {
+                SEGMENT_CACHE.put(pair.left, segmentMap);
+            }
             return segmentMap;
         } catch (Throwable e) {
             throwable = e;

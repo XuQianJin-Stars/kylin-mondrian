@@ -192,17 +192,25 @@ public class SqlStatement implements DBStatement {
 
 
 //            this.resultSet = statement.executeQuery(sql);
-
-            CachedRowSet cachedResultSet = QUERY_CACHE.getIfPresent(sql);
-            if (cachedResultSet == null) {
+            // if cache enalbe
+            if (MondrianProperties.instance().SqlCache.get()) {
+                CachedRowSet cachedResultSet = QUERY_CACHE.getIfPresent(sql);
+                if (cachedResultSet == null) {
+                    try (ResultSet rs = statement.executeQuery(sql)) {
+                        CachedRowSet rowSet = new FixedCachedRowSetImpl();
+                        rowSet.populate(rs);
+                        QUERY_CACHE.put(sql, rowSet);
+                        this.resultSet = rowSet.createCopyNoConstraints();
+                    }
+                } else {
+                    this.resultSet = cachedResultSet.createCopyNoConstraints();
+                }
+            } else {
                 try (ResultSet rs = statement.executeQuery(sql)) {
                     CachedRowSet rowSet = new FixedCachedRowSetImpl();
                     rowSet.populate(rs);
-                    QUERY_CACHE.put(sql, rowSet);
                     this.resultSet = rowSet.createCopyNoConstraints();
                 }
-            } else {
-                this.resultSet = cachedResultSet.createCopyNoConstraints();
             }
 
             // skip to first row specified in request
