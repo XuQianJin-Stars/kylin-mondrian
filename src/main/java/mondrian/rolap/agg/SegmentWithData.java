@@ -9,10 +9,18 @@
 */
 package mondrian.rolap.agg;
 
-import mondrian.olap.Util;
-import mondrian.rolap.*;
+import java.util.ArrayList;
+import java.util.BitSet;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
-import java.util.*;
+import mondrian.olap.Util;
+import mondrian.rolap.BitKey;
+import mondrian.rolap.CellKey;
+import mondrian.rolap.RolapStar;
+import mondrian.rolap.StarColumnPredicate;
+import mondrian.rolap.StarPredicate;
 
 /**
  * Extension to {@link Segment} with a data set.
@@ -58,21 +66,9 @@ public class SegmentWithData extends Segment {
      * @param segment Segment (without data)
      * @param data Data set
      */
-    public SegmentWithData(
-        Segment segment,
-        SegmentDataset data,
-        SegmentAxis[] axes)
-    {
-        this(
-            segment.getStar(),
-            segment.getConstrainedColumnsBitKey(),
-            segment.getColumns(),
-            segment.measure,
-            segment.predicates,
-            segment.getExcludedRegions(),
-            segment.compoundPredicateList,
-            data,
-            axes);
+    public SegmentWithData(Segment segment, SegmentDataset data, SegmentAxis[] axes, boolean isCreate) {
+        this(segment.getStar(), segment.getConstrainedColumnsBitKey(), segment.getColumns(), segment.measure,
+                segment.predicates, segment.getExcludedRegions(), segment.compoundPredicateList, data, axes, isCreate);
         if (segment instanceof SegmentWithData) {
             throw new AssertionError();
         }
@@ -80,32 +76,19 @@ public class SegmentWithData extends Segment {
 
     /**
      * Creates a SegmentWithData.
-     *
-     * @param star Star that this Segment belongs to
+     *  @param star Star that this Segment belongs to
      * @param measure Measure whose values this Segment contains
      * @param predicates List of axes; each is a constraint plus a list of
-     *     values.
+    *     values.
      * @param excludedRegions List of regions which are not in this segment.
+     * @param isCreate
      */
-    private SegmentWithData(
-        RolapStar star,
-        BitKey constrainedColumnsBitKey,
-        RolapStar.Column[] columns,
-        RolapStar.Measure measure,
-        StarColumnPredicate[] predicates,
-        List<ExcludedRegion> excludedRegions,
-        final List<StarPredicate> compoundPredicateList,
-        SegmentDataset data,
-        SegmentAxis[] axes)
-    {
-        super(
-            star,
-            constrainedColumnsBitKey,
-            columns,
-            measure,
-            predicates,
-            excludedRegions,
-            compoundPredicateList);
+    private SegmentWithData(RolapStar star, BitKey constrainedColumnsBitKey, RolapStar.Column[] columns,
+            RolapStar.Measure measure, StarColumnPredicate[] predicates, List<ExcludedRegion> excludedRegions,
+            final List<StarPredicate> compoundPredicateList, SegmentDataset data, SegmentAxis[] axes,
+            boolean isCreate) {
+        super(star, constrainedColumnsBitKey, columns, measure, predicates, excludedRegions, compoundPredicateList,
+                isCreate);
         this.axes = axes;
         this.data = data;
     }
@@ -235,12 +218,8 @@ public class SegmentWithData extends Segment {
      * @param excludedRegions List of regions to exclude from segment
      * @return Segment containing a subset of the values
      */
-    SegmentWithData createSubSegment(
-        BitSet[] axisKeepBitSets,
-        int bestColumn,
-        StarColumnPredicate bestPredicate,
-        List<ExcludedRegion> excludedRegions)
-    {
+    SegmentWithData createSubSegment(BitSet[] axisKeepBitSets, int bestColumn, StarColumnPredicate bestPredicate,
+            List<ExcludedRegion> excludedRegions) {
         assert axisKeepBitSets.length == axes.length;
 
         // Create a new segment with a subset of the values. If only one
@@ -269,23 +248,15 @@ public class SegmentWithData extends Segment {
                 axisPosMaps[j] = null; // identity map
             } else {
                 List<Object> newAxisKeyList = new ArrayList<Object>();
-                Map<Integer, Integer> map =
-                    axisPosMaps[j] =
-                    new HashMap<Integer, Integer>();
-                for (int bit = keepBitSet.nextSetBit(0);
-                    bit >= 0;
-                    bit = keepBitSet.nextSetBit(bit + 1))
-                {
+                Map<Integer, Integer> map = axisPosMaps[j] = new HashMap<Integer, Integer>();
+                for (int bit = keepBitSet.nextSetBit(0); bit >= 0; bit = keepBitSet.nextSetBit(bit + 1)) {
                     map.put(bit, newAxisKeyList.size());
                     newAxisKeyList.add(axisKeys[bit]);
                 }
-                newAxisKeys =
-                    newAxisKeyList.toArray(
-                        new Comparable[newAxisKeyList.size()]);
+                newAxisKeys = newAxisKeyList.toArray(new Comparable[newAxisKeyList.size()]);
                 assert newAxisKeys.length > 0;
             }
-            final SegmentAxis newAxis =
-                new SegmentAxis(newPredicate, newAxisKeys);
+            final SegmentAxis newAxis = new SegmentAxis(newPredicate, newAxisKeys);
             newAxes[j] = newAxis;
             newPredicates[j] = newPredicate;
             valueCount *= newAxisKeys.length;
@@ -296,18 +267,12 @@ public class SegmentWithData extends Segment {
         // (We could be smarter - sometimes a subset of a sparse dataset will
         // be dense and VERY occasionally a subset of a relatively dense dataset
         // will be sparse.)
-        SegmentDataset newData =
-            createDataset(
-                axes,
-                data instanceof SparseSegmentDataset,
-                data.getType(),
-                valueCount);
+        SegmentDataset newData = createDataset(axes, data instanceof SparseSegmentDataset, data.getType(), valueCount);
 
         // If the source is sparse, it is more efficient to iterate over the
         // values we need. If it's dense, it doesn't matter too much.
         int[] pos = new int[axes.length];
-        data:
-        for (Map.Entry<CellKey, Object> entry : data) {
+        data: for (Map.Entry<CellKey, Object> entry : data) {
             CellKey key = entry.getKey();
 
             // Map each of the source coordinates to the target coordinate.
@@ -331,10 +296,8 @@ public class SegmentWithData extends Segment {
         }
 
         // Create a segment with the new data set.
-        return new SegmentWithData(
-            star, constrainedColumnsBitKey, columns, measure,
-            newPredicates, excludedRegions, compoundPredicateList,
-            newData, newAxes);
+        return new SegmentWithData(star, constrainedColumnsBitKey, columns, measure, newPredicates, excludedRegions,
+                compoundPredicateList, newData, newAxes, false);
     }
 
     /**

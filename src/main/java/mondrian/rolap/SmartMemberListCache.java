@@ -10,10 +10,12 @@
 */
 package mondrian.rolap;
 
+import mondrian.olap.MondrianProperties;
 import mondrian.rolap.cache.SmartCache;
 import mondrian.rolap.cache.SoftSmartCache;
 import mondrian.rolap.sql.SqlConstraint;
 import mondrian.util.Pair;
+import mondrian.xmla.XmlaRequestContext;
 
 /**
  * Uses a {@link mondrian.rolap.cache.SmartCache} to store lists of members,
@@ -55,6 +57,16 @@ public class SmartMemberListCache <K, V> {
     }
 
     public Object put(K key, SqlConstraint constraint, V value) {
+        XmlaRequestContext context = XmlaRequestContext.localContext.get();
+        if (context.queryPage != null) {
+            Pair<K, Object> ckey;
+            if (context.queryPage.inOnePage) {
+                ckey = new Pair<K, Object>(key, context.queryPage.startPage);
+            } else {
+                ckey = new Pair<K, Object>(key, context.queryPage.queryEnd);
+            }
+            return cache.put(ckey, value);
+        }
         Object cacheKey = constraint.getCacheKey();
         if (cacheKey == null) {
             return null;
@@ -64,6 +76,16 @@ public class SmartMemberListCache <K, V> {
     }
 
     public V get(K key, SqlConstraint constraint) {
+        XmlaRequestContext context = XmlaRequestContext.localContext.get();
+        if (context.queryPage != null) {
+            Pair<K, Object> ckey;
+            if (context.queryPage.inOnePage) {
+                ckey = new Pair<K, Object>(key, context.queryPage.startPage);
+            } else {
+                ckey = new Pair<K, Object>(key, context.queryPage.queryEnd);
+            }
+            return cache.get(ckey);
+        }
         Pair<K, Object> key2 =
             new Pair<K, Object>(key, constraint.getCacheKey());
         return cache.get(key2);

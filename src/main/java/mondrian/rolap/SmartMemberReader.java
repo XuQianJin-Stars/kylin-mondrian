@@ -17,6 +17,7 @@ import mondrian.rolap.TupleReader.MemberBuilder;
 import mondrian.rolap.sql.MemberChildrenConstraint;
 import mondrian.rolap.sql.TupleConstraint;
 import mondrian.util.ConcatenableList;
+import mondrian.xmla.XmlaRequestContext;
 
 import java.util.*;
 
@@ -123,9 +124,15 @@ public class SmartMemberReader implements MemberReader {
         TupleConstraint constraint)
     {
         synchronized (cacheHelper) {
+            XmlaRequestContext context = XmlaRequestContext.localContext.get();
+            boolean pageFetchFlag = context.queryPage != null && context.queryPage.inOnePage;
+
             List<RolapMember> members =
                 cacheHelper.getLevelMembersFromCache(level, constraint);
             if (members != null) {
+                if (pageFetchFlag) {
+                    return members.subList(context.queryPage.pageStart, context.queryPage.pageEnd);
+                }
                 return members;
             }
 
@@ -133,6 +140,9 @@ public class SmartMemberReader implements MemberReader {
                 source.getMembersInLevel(
                     level, constraint);
             cacheHelper.putLevelMembersInCache(level, constraint, members);
+            if (pageFetchFlag) {
+                return members.subList(context.queryPage.pageStart, context.queryPage.pageEnd);
+            }
             return members;
         }
     }

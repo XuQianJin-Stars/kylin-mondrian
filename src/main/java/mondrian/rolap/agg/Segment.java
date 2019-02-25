@@ -16,6 +16,7 @@ import mondrian.olap.Util;
 import mondrian.rolap.*;
 import mondrian.spi.SegmentHeader;
 
+import mondrian.xmla.XmlaRequestContext;
 import org.apache.log4j.Logger;
 
 import java.io.PrintWriter;
@@ -89,6 +90,14 @@ public class Segment {
 
     public final RolapStar.Measure aggMeasure;
 
+    public int page;
+
+    public int from;
+
+    public int to;
+
+    public boolean isCreate;
+
     /**
      * An array of axes, one for each constraining column, containing the values
      * returned for that constraining column.
@@ -131,7 +140,8 @@ public class Segment {
         RolapStar.Measure baseMeasure,
         StarColumnPredicate[] predicates,
         List<ExcludedRegion> excludedRegions,
-        final List<StarPredicate> compoundPredicateList)
+        final List<StarPredicate> compoundPredicateList,
+        boolean isCreate)
     {
         this.id = nextId++;
         this.star = star;
@@ -161,6 +171,20 @@ public class Segment {
                 constrainedColumnsBitKey,
                 star,
                 compoundPredicateBitKeys);
+
+        // 设置分页
+        XmlaRequestContext context = XmlaRequestContext.localContext.get();
+        if (context.queryPage != null) {
+            if (context.queryPage.inOnePage) {
+                this.page = context.queryPage.startPage;
+            } else {
+                this.from = context.queryPage.queryStart;
+                this.to = context.queryPage.queryEnd;
+            }
+        }
+        this.isCreate = isCreate;
+
+
         this.segmentHeader =
             SegmentBuilder.toHeader(
                 star.getFactTable().getRelation().getSchema().statistic,
@@ -174,7 +198,8 @@ public class Segment {
         RolapStar.Measure measure,
         StarColumnPredicate[] predicates,
         List<ExcludedRegion> excludedRegions,
-        final List<StarPredicate> compoundPredicateList)
+        final List<StarPredicate> compoundPredicateList,
+        boolean isCreate)
     {
         this(
             star,
@@ -183,7 +208,7 @@ public class Segment {
             measure, measure,
             predicates,
             excludedRegions,
-            compoundPredicateList);
+            compoundPredicateList, isCreate);
     }
 
     public static Segment create(
@@ -206,7 +231,8 @@ public class Segment {
                 starConverter.convertMeasure(measure),
                 predicates,
                 Collections.<ExcludedRegion>emptyList(),
-                starConverter.convertPredicateList(compoundPredicateList));
+                starConverter.convertPredicateList(compoundPredicateList),
+                 true);
         } else {
             return new Segment(
                 star,
@@ -215,7 +241,7 @@ public class Segment {
                 measure,
                 predicates,
                 excludedRegions,
-                compoundPredicateList);
+                compoundPredicateList, true);
         }
     }
 

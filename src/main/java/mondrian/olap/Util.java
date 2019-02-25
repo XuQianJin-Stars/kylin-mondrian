@@ -10,6 +10,7 @@
 */
 package mondrian.olap;
 
+import com.alibaba.ttl.threadpool.TtlExecutors;
 import mondrian.mdx.*;
 import mondrian.olap.fun.FunUtil;
 import mondrian.olap.fun.Resolver;
@@ -329,8 +330,8 @@ public class Util extends XOMUtil {
                 rejectionPolicy);
         }
 
-        // Done
-        return executor;
+        // Done, 使用 TTL 封装
+        return TtlExecutors.getTtlExecutorService(executor);
     }
 
     /**

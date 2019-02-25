@@ -29,6 +29,7 @@ import mondrian.rolap.SqlStatement;
 import mondrian.spi.Dialect;
 import mondrian.util.DirectedGraph;
 import mondrian.util.Pair;
+import mondrian.xmla.XmlaRequestContext;
 
 /**
  * <code>SqlQuery</code> allows us to build a <code>select</code>
@@ -89,7 +90,7 @@ public class SqlQuery {
     private final ClauseList where;
     private final ClauseList groupBy;
     private final ClauseList having;
-    private final ClauseList orderBy;
+    private ClauseList orderBy;
     private final List<ClauseList> groupingSets;
     private final ClauseList groupingFunctions;
 
@@ -525,8 +526,33 @@ public class SqlQuery {
             ClauseList.listToBuffer(buf, groupingSets, generateFormattedSql, prefix, " group by grouping sets (", ", ",
                     ")");
         }
+        XmlaRequestContext context = XmlaRequestContext.localContext.get();
         having.toBuffer(buf, generateFormattedSql, prefix, " having ", " and ", "", "");
         orderBy.toBuffer(buf, generateFormattedSql, prefix, " order by ", ", ", "", "");
+        if (orderBy.size() != 0 && context.queryPage != null) {
+            context.queryPage.orderCols = orderBy;
+        }
+        if (orderBy.size() == 0 && context.queryPage != null && context.queryPage.orderCols != null) {
+            orderBy = (ClauseList) context.queryPage.orderCols;
+            orderBy.toBuffer(buf, generateFormattedSql, prefix, " order by ", ", ", "", "");
+        }
+
+        // set limit
+        buf.append(Util.nl);
+        int fullPullMaxSize = MondrianProperties.instance().MaxPullSize.get();
+        if (context.queryPage != null) {
+            if (context.queryPage.inOnePage && context.queryPage.startPage == 0) {
+                buf.append("limit " + context.queryPage.pageSize);
+            } else if (context.queryPage.inOnePage && context.queryPage.startPage != 0) {
+                buf.append("limit " + context.queryPage.pageSize + " offset " + context.queryPage.startPage * context.queryPage.pageSize);
+            } else if (!context.queryPage.inOnePage) {
+                buf.append("limit " + (context.queryPage.queryEnd - context.queryPage.queryStart) + " offset " + context.queryPage.queryStart);
+            }
+        } else {
+            buf.append("limit " + fullPullMaxSize);
+        }
+
+
         return buf;
     }
 
@@ -731,7 +757,7 @@ public class SqlQuery {
         return dialect.getDatabaseProduct().getFamily().name().toLowerCase();
     }
 
-    static class ClauseList extends ArrayList<String> {
+    public static class ClauseList extends ArrayList<String> {
         protected final boolean allowDups;
 
         public List<String> seps = new LinkedList<String>();

@@ -24,6 +24,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.sql.DataSource;
 
+import mondrian.olap.MondrianProperties;
+import mondrian.xmla.XmlaRequestContext;
 import org.apache.log4j.Logger;
 import org.olap4j.Scenario;
 
@@ -64,7 +66,6 @@ import mondrian.util.LockBox;
 import mondrian.util.MemoryMonitor;
 import mondrian.util.MemoryMonitorFactory;
 import mondrian.util.Pair;
-import mondrian.xmla.XmlaRequestProperties;
 
 /**
  * A <code>RolapConnection</code> is a connection to a Mondrian OLAP Server.
@@ -412,33 +413,36 @@ public class RolapConnection extends ConnectionBase {
      */
     public Result execute(final Execution execution) {
         execution.copyMDC();
-        Boolean enableOptimizeMdx = XmlaRequestProperties.enableOptimizeMdx.get();
-        Boolean needCalculateTotal = XmlaRequestProperties.needCalculateTotal.get();
-        boolean flag;
-        if (enableOptimizeMdx != null && enableOptimizeMdx) {
-            flag = (needCalculateTotal != null && needCalculateTotal) ? true : false;
-        } else {
-            flag = false;
-        }
-
-        final boolean shouldResortAxes = flag;
-        return
-            server.getResultShepherd()
-                .shepherdExecution(
-                    execution,
-                    new Callable<Result>() {
-                        public Result call() throws Exception {
-                            return executeInternal(execution, shouldResortAxes);
-                        }
-                    });
+        return server.getResultShepherd().shepherdExecution(execution, new Callable<Result>() {
+            public Result call() throws Exception {
+                return executeInternal(execution);
+            }
+        });
     }
 
-    private Result executeInternal(final Execution execution, final boolean shouldResortAxes) {
+    private Result executeInternal(final Execution execution) {
         execution.setContextMap();
 
         // set current schema
         RolapSchemaProvider.setCurrentSchema(this.schema);
-        XmlaRequestProperties.shouldResortAxes.set(shouldResortAxes);
+        XmlaRequestContext context = XmlaRequestContext.localContext.get();
+        if (context.queryPage != null) {
+            int pageSize = MondrianProperties.instance().CachePageSize.get();
+            int startPage = context.queryPage.queryStart / pageSize;
+            int endPage = (context.queryPage.queryEnd - 1) / pageSize;
+            MondrianProperties.instance().DisableCaching.set(true);
+
+            context.queryPage.pageSize = pageSize;
+            if (startPage == endPage) {
+                context.queryPage.inOnePage = true;
+                context.queryPage.startPage = startPage;
+                context.queryPage.endPage = endPage;
+                context.queryPage.pageStart = context.queryPage.queryStart - pageSize * startPage;
+                context.queryPage.pageEnd = context.queryPage.queryEnd - pageSize * startPage;
+            } else {
+                context.queryPage.inOnePage = false;
+            }
+        }
 
         final Statement statement = execution.getMondrianStatement();
         // Cleanup any previous executions still running

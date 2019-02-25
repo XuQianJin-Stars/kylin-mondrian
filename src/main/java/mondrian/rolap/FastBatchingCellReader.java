@@ -21,6 +21,7 @@ import mondrian.server.Locus;
 import mondrian.spi.*;
 import mondrian.util.*;
 
+import mondrian.xmla.XmlaRequestContext;
 import org.apache.log4j.Logger;
 import org.apache.log4j.MDC;
 
@@ -134,7 +135,8 @@ public class FastBatchingCellReader implements CellReader {
         // synchronous request for the cell segment. If it is in the cache, it
         // will be worth the wait, because we can avoid the effort of batching
         // up requests that could have been satisfied by the same segment.
-        if (cacheEnabled && missCount == 0) {
+        XmlaRequestContext context = XmlaRequestContext.localContext.get();
+        if (cacheEnabled && missCount == 0 && !context.clientType.equals(XmlaRequestContext.ClientType.SMARTBI)) {
             SegmentWithData segmentWithData = cacheMgr.peek(request);
             if (segmentWithData != null) {
                 segmentWithData.getStar().register(segmentWithData);
@@ -243,7 +245,8 @@ public class FastBatchingCellReader implements CellReader {
                         cacheMgr,
                         getDialect(),
                         cube,
-                        Collections.unmodifiableList(cellRequests1)));
+                        Collections.unmodifiableList(cellRequests1),
+                            XmlaRequestContext.localContext.get()));
 
             int failureCount = 0;
 
@@ -591,13 +594,22 @@ class BatchLoader {
      * we return true.
      */
     private boolean loadFromCaches(
-        final CellRequest request,
-        final AggregationKey key,
-        final SegmentBuilder.SegmentConverterImpl converter)
+            final CellRequest request,
+            final AggregationKey key,
+            final SegmentBuilder.SegmentConverterImpl converter)
     {
         if (MondrianProperties.instance().DisableCaching.get()) {
             // Caching is disabled. Return always false.
             return false;
+        }
+        // 如果正在翻 segment, 则默认重新获取
+        XmlaRequestContext context = XmlaRequestContext.localContext.get();
+        if (context.queryPage != null) {
+            int prevPage = (context.queryPage.queryStart - 1) / context.queryPage.pageSize;
+            int nextPage = (context.queryPage.queryEnd - 1) / context.queryPage.pageSize;
+            if (prevPage != nextPage) {
+                return false;
+            }
         }
 
         // Is request matched by one of the headers we intend to load?
@@ -972,13 +984,15 @@ class BatchLoader {
         private final List<CellRequest> cellRequests;
         private final Map<String, Object> mdc =
             new HashMap<String, Object>();
+        public XmlaRequestContext context;
 
         public LoadBatchCommand(
             Locus locus,
             SegmentCacheManager cacheMgr,
             Dialect dialect,
             RolapCube cube,
-            List<CellRequest> cellRequests)
+            List<CellRequest> cellRequests,
+            XmlaRequestContext context)
         {
             this.locus = locus;
             this.cacheMgr = cacheMgr;
@@ -988,9 +1002,11 @@ class BatchLoader {
             if (MDC.getContext() != null) {
                 this.mdc.putAll(MDC.getContext());
             }
+            this.context = context;
         }
 
         public LoadBatchResponse call() {
+            XmlaRequestContext.localContext.set(this.context);
             if (MDC.getContext() != null) {
                 final Map<String, Object> old = MDC.getContext();
                 old.clear();

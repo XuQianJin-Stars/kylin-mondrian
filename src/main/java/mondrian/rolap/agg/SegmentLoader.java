@@ -26,12 +26,9 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 
+import mondrian.xmla.XmlaRequestContext;
 import org.apache.log4j.Logger;
-
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
 
 import mondrian.olap.MondrianException;
 import mondrian.olap.MondrianProperties;
@@ -84,9 +81,6 @@ public class SegmentLoader {
         this.cacheMgr = cacheMgr;
     }
 
-    private static Cache<String, Map<Segment, SegmentWithData>> SEGMENT_CACHE = CacheBuilder.newBuilder()
-            .expireAfterWrite(5, TimeUnit.MINUTES).maximumSize(1000).build();
-
     /**
      * Loads data for all the segments of the GroupingSets. If the grouping sets
      * list contains more than one Grouping Set then data is loaded using the
@@ -136,8 +130,9 @@ public class SegmentLoader {
             }
         }
         try {
+            XmlaRequestContext context = XmlaRequestContext.localContext.get();
             segmentFutures.add(cacheMgr.sqlExecutor.submit(
-                    new SegmentLoadCommand(Locus.peek(), this, cellRequestCount, groupingSets, compoundPredicateList)));
+                    new SegmentLoadCommand(Locus.peek(), this, cellRequestCount, groupingSets, compoundPredicateList, context)));
         } catch (Exception e) {
             throw new MondrianException(e);
         }
@@ -149,17 +144,20 @@ public class SegmentLoader {
         private final int cellRequestCount;
         private final List<GroupingSet> groupingSets;
         private final List<StarPredicate> compoundPredicateList;
+        private final XmlaRequestContext context;
 
         public SegmentLoadCommand(Locus locus, SegmentLoader segmentLoader, int cellRequestCount,
-                List<GroupingSet> groupingSets, List<StarPredicate> compoundPredicateList) {
+                                  List<GroupingSet> groupingSets, List<StarPredicate> compoundPredicateList, XmlaRequestContext context) {
             this.locus = locus;
             this.segmentLoader = segmentLoader;
             this.cellRequestCount = cellRequestCount;
             this.groupingSets = groupingSets;
             this.compoundPredicateList = compoundPredicateList;
+            this.context = context;
         }
 
         public Map<Segment, SegmentWithData> call() throws Exception {
+            XmlaRequestContext.localContext.set(this.context);
             Locus.push(locus);
             try {
                 return segmentLoader.loadImpl(cellRequestCount, groupingSets, compoundPredicateList);
@@ -184,15 +182,6 @@ public class SegmentLoader {
             RolapStar star = groupingSetsList.getStar();
             // set current schema
             RolapSchemaProvider.setCurrentSchema(star.getSchema());
-            Pair<String, List<SqlStatement.Type>> pair = AggregationManager.generateSql(groupingSetsList,
-                    compoundPredicateList);
-
-            if (MondrianProperties.instance().SegmentLoadingCache.get()) {
-                Map<Segment, SegmentWithData> cachedSegment = SEGMENT_CACHE.getIfPresent(pair.left);
-                if (cachedSegment != null) {
-                    return cachedSegment;
-                }
-            }
             stmt = createExecuteSql(cellRequestCount, groupingSetsList, compoundPredicateList);
 
             if (stmt == null) {
@@ -213,9 +202,6 @@ public class SegmentLoader {
 
             setDataToSegments(this.cacheMgr, groupingSetsList, groupingDataSetsMap, segmentMap);
 
-            if (MondrianProperties.instance().SegmentLoadingCache.get()) {
-                SEGMENT_CACHE.put(pair.left, segmentMap);
-            }
             return segmentMap;
         } catch (Throwable e) {
             throwable = e;
@@ -371,7 +357,7 @@ public class SegmentLoader {
             for (int j = 0; j < segments.size(); j++) {
                 Segment segment = segments.get(j);
                 final SegmentDataset segmentDataset = cohort.segmentDatasetList.get(j);
-                final SegmentWithData segmentWithData = new SegmentWithData(segment, segmentDataset, cohort.axes);
+                final SegmentWithData segmentWithData = new SegmentWithData(segment, segmentDataset, cohort.axes, true);
 
                 segmentSlotMap.put(segment, segmentWithData);
 
