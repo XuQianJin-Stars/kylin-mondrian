@@ -14,6 +14,24 @@
   -->
 <PropertyDefinitions>
     <PropertyDefinition>
+        <Name>CachePageSize</Name>
+        <Path>mondrian.query.sql.page.size</Path>
+        <Description>
+            <p>page size of a sql query.</p>
+        </Description>
+        <Type>int</Type>
+        <Default>10000</Default>
+    </PropertyDefinition>
+    <PropertyDefinition>
+        <Name>MaxPullSize</Name>
+        <Path>mondrian.query.sql.max.size</Path>
+        <Description>
+            <p>max query rows of a sql query.</p>
+        </Description>
+        <Type>int</Type>
+        <Default>50000</Default>
+    </PropertyDefinition>
+    <PropertyDefinition>
         <Name>QueryLimit</Name>
         <Path>mondrian.query.limit</Path>
         <Description>

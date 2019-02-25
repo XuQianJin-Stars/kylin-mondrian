@@ -77,7 +77,7 @@ public class SegmentAxis {
             mapKeyToOffset =
                 new HashMap<Comparable, Integer>(keys.length * 3 / 2);
             for (int i = 0; i < keys.length; i++) {
-                mapKeyToOffset.put(keys[i], i);
+                mapKeyToOffset.put(keys[i].toString(), i);
             }
         }
         assert predicate != null;
@@ -168,9 +168,9 @@ public class SegmentAxis {
 
     final int getOffset(Comparable key) {
         if (keys.length == 1) {
-            return keys[0].equals(key) ? 0 : -1;
+            return keys[0].toString().equals(key.toString()) ? 0 : -1;
         }
-        Integer ordinal = mapKeyToOffset.get(key);
+        Integer ordinal = mapKeyToOffset.get(key.toString());
         if (ordinal == null) {
             return -1;
         }

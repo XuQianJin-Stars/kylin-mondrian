@@ -12,24 +12,41 @@
 */
 package mondrian.rolap;
 
-import mondrian.olap.*;
-import mondrian.rolap.agg.*;
-import mondrian.rolap.aggmatcher.AggStar;
-import mondrian.rolap.sql.SqlQuery;
-import mondrian.server.Locus;
-import mondrian.spi.*;
-
-import org.apache.commons.collections.map.ReferenceMap;
-import org.apache.log4j.Logger;
-
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.ref.SoftReference;
 import java.sql.Connection;
-import java.sql.*;
-import java.util.*;
+import java.sql.PreparedStatement;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.ListIterator;
+import java.util.Map;
 
 import javax.sql.DataSource;
+
+import org.apache.commons.collections.map.ReferenceMap;
+import org.apache.log4j.Logger;
+
+import mondrian.olap.Member;
+import mondrian.olap.MondrianDef;
+import mondrian.olap.MondrianProperties;
+import mondrian.olap.Util;
+import mondrian.rolap.agg.Aggregation;
+import mondrian.rolap.agg.AggregationKey;
+import mondrian.rolap.agg.AggregationManager;
+import mondrian.rolap.agg.CellRequest;
+import mondrian.rolap.agg.SegmentWithData;
+import mondrian.rolap.aggmatcher.AggStar;
+import mondrian.rolap.sql.SqlQuery;
+import mondrian.server.Locus;
+import mondrian.spi.Dialect;
+import mondrian.xmla.XmlaRequestContext;
 
 /**
  * A <code>RolapStar</code> is a star schema. It is the means to read cell
@@ -78,16 +95,11 @@ public class RolapStar {
      * {@link RolapSchema.RolapStarRegistry#getOrCreateStar} to create a
      * {@link RolapStar}.
      */
-    protected RolapStar(
-        final RolapSchema schema,
-        final DataSource dataSource,
-        final RolapSchema.PhysRelation fact)
-    {
+    protected RolapStar(final RolapSchema schema, final DataSource dataSource, final RolapSchema.PhysRelation fact) {
         this.cacheAggregations = true;
         this.schema = schema;
         this.dataSource = dataSource;
-        final RolapSchema.PhysPath path =
-            new RolapSchema.PhysPathBuilder(fact).done();
+        final RolapSchema.PhysPath path = new RolapSchema.PhysPathBuilder(fact).done();
         this.factTable = new RolapStar.Table(this, fact, null, path);
 
         this.sqlQueryDialect = schema.getDialect();
@@ -100,9 +112,8 @@ public class RolapStar {
      * is true, then volume is returned, otherwise row count.
      */
     public int getCost() {
-        return MondrianProperties.instance().ChooseAggregateByVolume.get()
-            ? factTable.relation.getVolume()
-            : factTable.relation.getRowCount();
+        return MondrianProperties.instance().ChooseAggregateByVolume.get() ? factTable.relation.getVolume()
+                : factTable.relation.getRowCount();
     }
 
     /**
@@ -127,19 +138,35 @@ public class RolapStar {
      * @return Cell value, or {@link Util#nullValue} if the cell value is null,
      * or null if the cell is not in any segment in the local cache.
      */
-    public Object getCellFromCache(
-        CellRequest request,
-        RolapAggregationManager.PinSet pinSet)
-    {
+    public Object getCellFromCache(CellRequest request, RolapAggregationManager.PinSet pinSet) {
         // REVIEW: Is it possible to optimize this so not every cell lookup
         // causes an AggregationKey to be created?
         AggregationKey aggregationKey = AggregationKey.create(request);
 
         final Bar bar = localBars.get();
         for (SegmentWithData segment : Util.GcIterator.over(bar.segmentRefs)) {
-            if (!segment.getConstrainedColumnsBitKey().equals(
-                    request.getConstrainedColumnsBitKey()))
-            {
+            XmlaRequestContext context = XmlaRequestContext.localContext.get();
+            if (context.queryPage != null) {
+                if (context.queryPage.inOnePage) {
+                    int page = context.queryPage.startPage;
+                    if (page != segment.page) {
+                        continue;
+                    }
+                } else {
+                    int from = context.queryPage.queryStart;
+                    int to = context.queryPage.queryEnd;
+                    if (from != segment.from || to != segment.to) {
+                        continue;
+                    }
+                }
+                // 如果正在跨segment过程中，且是旧的 segment, 则认为已经失效
+                int prevPage = (context.queryPage.queryStart - 1) / context.queryPage.pageSize;
+                int nextPage = (context.queryPage.queryEnd - 1) / context.queryPage.pageSize;
+                if (prevPage != nextPage && !segment.isCreate) {
+                    continue;
+                }
+            }
+            if (!segment.getConstrainedColumnsBitKey().equals(request.getConstrainedColumnsBitKey())) {
                 continue;
             }
 
@@ -170,9 +197,7 @@ public class RolapStar {
     }
 
     private Object getCellFromExternalCache(CellRequest request) {
-        final SegmentWithData segment =
-            Locus.peek().getServer().getAggregationManager()
-                .cacheMgr.peek(request);
+        final SegmentWithData segment = Locus.peek().getServer().getAggregationManager().cacheMgr.peek(request);
         if (segment == null) {
             return null;
         }
@@ -180,8 +205,7 @@ public class RolapStar {
     }
 
     public void register(SegmentWithData segment) {
-        localBars.get().segmentRefs.add(
-            new SoftReference<SegmentWithData>(segment));
+        localBars.get().segmentRefs.add(new SoftReference<SegmentWithData>(segment));
     }
 
     /**
@@ -208,15 +232,13 @@ public class RolapStar {
      */
     public static class Bar {
         /** Holds all thread-local aggregations of this star. */
-        private final Map<AggregationKey, Aggregation> aggregations =
-            new ReferenceMap(ReferenceMap.WEAK, ReferenceMap.WEAK);
+        private final Map<AggregationKey, Aggregation> aggregations = new ReferenceMap(ReferenceMap.WEAK,
+                ReferenceMap.WEAK);
 
-        private final List<SoftReference<SegmentWithData>> segmentRefs =
-            new ArrayList<SoftReference<SegmentWithData>>();
+        private final List<SoftReference<SegmentWithData>> segmentRefs = new ArrayList<SoftReference<SegmentWithData>>();
     }
 
-    private final ThreadLocal<Bar> localBars =
-        new BarThreadLocal();
+    private final ThreadLocal<Bar> localBars = new BarThreadLocal();
 
     /**
      * Returns the number of columns in the star.
@@ -365,20 +387,15 @@ public class RolapStar {
      *
      * @param aggregationKey this is the constrained column bitkey
      */
-    public Aggregation lookupOrCreateAggregation(
-        AggregationKey aggregationKey)
-    {
+    public Aggregation lookupOrCreateAggregation(AggregationKey aggregationKey) {
         Aggregation aggregation = lookupSegment(aggregationKey);
         if (aggregation != null) {
             return aggregation;
         }
 
-        aggregation =
-            new Aggregation(
-                aggregationKey);
+        aggregation = new Aggregation(aggregationKey);
 
-        localBars.get().aggregations.put(
-            aggregationKey, aggregation);
+        localBars.get().aggregations.put(aggregationKey, aggregation);
 
         return aggregation;
     }
@@ -467,7 +484,7 @@ public class RolapStar {
     public BitKey getBitKey(List<String> tableAlias, List<String> columnName) {
         BitKey bitKey = BitKey.Factory.makeBitKey(getColumnCount());
         Column starColumn;
-        for (int i = 0; i < tableAlias.size(); i ++) {
+        for (int i = 0; i < tableAlias.size(); i++) {
             starColumn = lookupColumn(tableAlias.get(i), columnName.get(i));
             if (starColumn != null) {
                 bitKey.set(starColumn.getBitPosition());
@@ -502,19 +519,14 @@ public class RolapStar {
      * If <code>joinColumn</code> is specified, only considers child tables
      * joined by the given column.
      */
-    public static void collectColumns(
-        Collection<Column> columnList,
-        Table table,
-        RolapSchema.PhysRealColumn joinColumn)
-    {
+    public static void collectColumns(Collection<Column> columnList, Table table,
+            RolapSchema.PhysRealColumn joinColumn) {
         Util.deprecated("used only by AggMatcher", true);
         if (joinColumn == null) {
             columnList.addAll(table.columnList);
         }
         for (Table child : table.children) {
-            if (joinColumn == null
-                || child.getJoinCondition().left.equals(joinColumn))
-            {
+            if (joinColumn == null || child.getJoinCondition().left.equals(joinColumn)) {
                 collectColumns(columnList, child, null);
             }
         }
@@ -611,7 +623,6 @@ public class RolapStar {
          */
         private final Column nameColumn;
 
-
         /** this has a unique value per star */
         private final int bitPosition;
         /**
@@ -620,29 +631,15 @@ public class RolapStar {
          */
         private int approxCardinality = Integer.MIN_VALUE;
 
-        private Column(
-            String name,
-            Table table,
-            RolapSchema.PhysColumn expression,
-            Dialect.Datatype datatype,
-            SqlStatement.Type internalType,
-            Column nameColumn,
-            Column parentColumn,
-            String usagePrefix,
-            int approxCardinality,
-            int bitPosition)
-        {
+        private Column(String name, Table table, RolapSchema.PhysColumn expression, Dialect.Datatype datatype,
+                SqlStatement.Type internalType, Column nameColumn, Column parentColumn, String usagePrefix,
+                int approxCardinality, int bitPosition) {
             assert table != null;
             assert name != null;
             assert datatype != null;
-            assert expression == null
-                   || datatype == expression.getDatatype()
-                   || expression.getDatatype() == null
-                   || this instanceof Measure
-                : "expression " + expression + ", datatype" + datatype
-                  + " mismatch";
-            assert expression == null
-                   || internalType == expression.getInternalType();
+            assert expression == null || datatype == expression.getDatatype() || expression.getDatatype() == null
+                    || this instanceof Measure : "expression " + expression + ", datatype" + datatype + " mismatch";
+            assert expression == null || internalType == expression.getInternalType();
             this.name = name;
             this.table = table;
             this.expression = expression;
@@ -656,15 +653,13 @@ public class RolapStar {
         }
 
         public boolean equals(Object obj) {
-            if (! (obj instanceof RolapStar.Column)) {
+            if (!(obj instanceof RolapStar.Column)) {
                 return false;
             }
             RolapStar.Column other = (RolapStar.Column) obj;
             // Note: both columns have to be from the same table
-            return
-                other.table == this.table
-                && Util.equals(other.expression, this.expression)
-                && other.name.equals(this.name);
+            return other.table == this.table && Util.equals(other.expression, this.expression)
+                    && other.name.equals(this.name);
         }
 
         public int hashCode() {
@@ -691,8 +686,8 @@ public class RolapStar {
 
         public RolapStar.Column getParentColumn() {
             Util.deprecated(
-                "parentColumn seems to be used ONLY for AggGen; remove it and represent the information outside RolapStar?",
-                false);
+                    "parentColumn seems to be used ONLY for AggGen; remove it and represent the information outside RolapStar?",
+                    false);
             return parentColumn;
         }
 
@@ -717,12 +712,12 @@ public class RolapStar {
          */
         public int getCardinality() {
             return DEFAULT_CARDINALITY;
-//            if (approxCardinality < 0) {
-//                approxCardinality =
-//                    table.relation.getSchema().statistic.getColumnCardinality(
-//                        table.relation, expression, approxCardinality);
-//            }
-//            return approxCardinality;
+            //            if (approxCardinality < 0) {
+            //                approxCardinality =
+            //                    table.relation.getSchema().statistic.getColumnCardinality(
+            //                        table.relation, expression, approxCardinality);
+            //            }
+            //            return approxCardinality;
         }
 
         public String toString() {
@@ -762,9 +757,7 @@ public class RolapStar {
         public String getDatatypeString(Dialect dialect) {
             Util.deprecated("move to dialect, or remove?; not used?", true);
             final SqlQuery query = new SqlQuery(dialect);
-            query.addFrom(
-                table.star.factTable.relation, table.star.factTable.alias,
-                false);
+            query.addFrom(table.star.factTable.relation, table.star.factTable.alias, false);
             query.addFrom(table.relation, table.alias, false);
             query.addSelect(expression.toSql(), null);
             final String sql = query.toString();
@@ -773,8 +766,7 @@ public class RolapStar {
             try {
                 jdbcConnection = table.star.dataSource.getConnection();
                 pstmt = jdbcConnection.prepareStatement(sql);
-                final ResultSetMetaData resultSetMetaData =
-                    pstmt.getMetaData();
+                final ResultSetMetaData resultSetMetaData = pstmt.getMetaData();
                 assert resultSetMetaData.getColumnCount() == 1;
                 final String type = resultSetMetaData.getColumnTypeName(1);
                 int precision = resultSetMetaData.getPrecision(1);
@@ -792,9 +784,7 @@ public class RolapStar {
                 }
                 return typeString;
             } catch (SQLException e) {
-                throw Util.newError(
-                    e,
-                    "Error while deriving type of column " + toString());
+                throw Util.newError(e, "Error while deriving type of column " + toString());
             } finally {
                 Util.close(null, pstmt, jdbcConnection);
             }
@@ -816,25 +806,10 @@ public class RolapStar {
         private final RolapAggregator aggregator;
         private final Dialect.Datatype datatype;
 
-        public Measure(
-            String name,
-            String cubeName,
-            RolapAggregator aggregator,
-            Table table,
-            RolapSchema.PhysColumn expression,
-            Dialect.Datatype datatype)
-        {
-            super(
-                name,
-                table,
-                expression,
-                datatype,
-                null,
-                null,
-                null,
-                null,
-                Integer.MIN_VALUE,
-                table.star.getColumnCount());
+        public Measure(String name, String cubeName, RolapAggregator aggregator, Table table,
+                RolapSchema.PhysColumn expression, Dialect.Datatype datatype) {
+            super(name, table, expression, datatype, null, null, null, null, Integer.MIN_VALUE,
+                    table.star.getColumnCount());
             this.cubeName = cubeName;
             this.aggregator = aggregator;
             this.datatype = datatype;
@@ -850,7 +825,7 @@ public class RolapStar {
         }
 
         public boolean equals(Object o) {
-            if (! (o instanceof RolapStar.Measure)) {
+            if (!(o instanceof RolapStar.Measure)) {
                 return false;
             }
             RolapStar.Measure that = (RolapStar.Measure) o;
@@ -879,11 +854,7 @@ public class RolapStar {
             pw.print(" (");
             pw.print(getBitPosition());
             pw.print("): ");
-            pw.print(
-                aggregator.getExpression(
-                    getExpression() == null
-                        ? null
-                        : getExpression().toSql()));
+            pw.print(aggregator.getExpression(getExpression() == null ? null : getExpression().toSql()));
         }
 
         public String getCubeName() {
@@ -912,12 +883,7 @@ public class RolapStar {
         private final String alias;
         private final RolapSchema.PhysPath path; // path from fact table
 
-        private Table(
-            RolapStar star,
-            RolapSchema.PhysRelation relation,
-            Table parent,
-            RolapSchema.PhysPath path)
-        {
+        private Table(RolapStar star, RolapSchema.PhysRelation relation, Table parent, RolapSchema.PhysPath path) {
             assert star != null;
             assert relation != null;
             this.star = star;
@@ -987,12 +953,10 @@ public class RolapStar {
         private boolean matches(String columnName, Column column) {
             final RolapSchema.PhysColumn expr = column.getExpression();
             if (expr instanceof RolapSchema.PhysRealColumn) {
-                RolapSchema.PhysRealColumn columnExpr =
-                    (RolapSchema.PhysRealColumn) expr;
+                RolapSchema.PhysRealColumn columnExpr = (RolapSchema.PhysRealColumn) expr;
                 return columnExpr.name.equals(columnName);
             } else if (expr instanceof RolapSchema.PhysCalcColumn) {
-                RolapSchema.PhysCalcColumn columnExpr =
-                    (RolapSchema.PhysCalcColumn) expr;
+                RolapSchema.PhysCalcColumn columnExpr = (RolapSchema.PhysCalcColumn) expr;
                 return columnExpr.toSql().equals(columnName);
             }
             return false;
@@ -1015,12 +979,8 @@ public class RolapStar {
          * @param property Property of level (for descriptive purposes, may be
          *     null)
          */
-        public Column lookupColumnByExpression(
-            RolapSchema.PhysColumn physColumn,
-            boolean create,
-            String name,
-            String property)
-        {
+        public Column lookupColumnByExpression(RolapSchema.PhysColumn physColumn, boolean create, String name,
+                String property) {
             for (Column column : getColumns()) {
                 if (column instanceof Measure) {
                     continue;
@@ -1033,25 +993,16 @@ public class RolapStar {
                 if (name == null) {
                     name = physColumn.name;
                 }
-                Column column =
-                    new RolapStar.Column(
-                        property == null
-                            ? name
-                            : name + " (" + property + ")",
-                        this,
+                Column column = new RolapStar.Column(property == null ? name : name + " (" + property + ")", this,
                         physColumn,
-                        physColumn.getDatatype() == null
-                            ? Dialect.Datatype.Numeric
-                            : physColumn.getDatatype(),
+                        physColumn.getDatatype() == null ? Dialect.Datatype.Numeric : physColumn.getDatatype(),
                         physColumn.getInternalType(),
                         // TODO: obsolete nameColumn
                         null,
                         // TODO: obsolete parentColumn
                         null,
                         // TODO: pass in usagePrefix (from DimensionUsage)
-                        null,
-                        Integer.MIN_VALUE,
-                        star.getColumnCount());
+                        null, Integer.MIN_VALUE, star.getColumnCount());
                 addColumn(column);
                 return column;
             }
@@ -1066,9 +1017,7 @@ public class RolapStar {
             for (Column column : getColumns()) {
                 if (column instanceof Measure) {
                     Measure measure = (Measure) column;
-                    if (measure.getName().equals(name)
-                        && measure.getCubeName().equals(cubeName))
-                    {
+                    if (measure.getName().equals(name) && measure.getCubeName().equals(cubeName)) {
                         return measure;
                     }
                 }
@@ -1116,39 +1065,22 @@ public class RolapStar {
         }
 
         void makeMeasure(RolapBaseCubeMeasure measure) {
-            final Measure starMeasure =
-                makeMeasure(measure, measure.getExpr(), false);
+            final Measure starMeasure = makeMeasure(measure, measure.getExpr(), false);
             measure.setStarMeasure(starMeasure); // reverse mapping
         }
 
-        Measure makeMeasure(
-            RolapBaseCubeMeasure measure,
-            RolapSchema.PhysColumn expr,
-            boolean rollup)
-        {
-            Dialect.Datatype datatype =
-                measure.getAggregator().deriveDatatype(
-                    expr == null
-                        ? Collections.<Dialect.Datatype>emptyList()
-                        : Collections.singletonList(expr.getDatatype()));
-            if (datatype == null
-                && expr != null)
-            {
+        Measure makeMeasure(RolapBaseCubeMeasure measure, RolapSchema.PhysColumn expr, boolean rollup) {
+            Dialect.Datatype datatype = measure.getAggregator()
+                    .deriveDatatype(expr == null ? Collections.<Dialect.Datatype> emptyList()
+                            : Collections.singletonList(expr.getDatatype()));
+            if (datatype == null && expr != null) {
                 // Sometimes we don't know the type of the expression (e.g. if
                 // it is a SQL expression) but we do know the type of the
                 // measure. Let's assume they are consistent.
                 datatype = measure.getDatatype();
             }
-            RolapStar.Measure starMeasure =
-                new RolapStar.Measure(
-                    measure.getName(),
-                    measure.getCube().getName(),
-                    rollup
-                        ? measure.getAggregator().getRollup()
-                        : measure.getAggregator(),
-                    this,
-                    expr,
-                    datatype);
+            RolapStar.Measure starMeasure = new RolapStar.Measure(measure.getName(), measure.getCube().getName(),
+                    rollup ? measure.getAggregator().getRollup() : measure.getAggregator(), this, expr, datatype);
 
             addColumn(starMeasure);
             return starMeasure;
@@ -1163,10 +1095,7 @@ public class RolapStar {
          *
          * @return Child, or null if not found and add is false
          */
-        public Table findChild(
-            RolapSchema.PhysHop hop,
-            boolean add)
-        {
+        public Table findChild(RolapSchema.PhysHop hop, boolean add) {
             for (Table child : getChildren()) {
                 if (child.relation.equals(hop.relation)) {
                     if (Util.last(child.path.hopList).equals(hop)) {
@@ -1175,10 +1104,8 @@ public class RolapStar {
                 }
             }
             if (add) {
-                RolapSchema.PhysPath path2 =
-                    new RolapSchema.PhysPathBuilder(path).add(hop).done();
-                Table child =
-                    new RolapStar.Table(star, hop.relation, this, path2);
+                RolapSchema.PhysPath path2 = new RolapSchema.PhysPathBuilder(path).add(hop).done();
+                Table child = new RolapStar.Table(star, hop.relation, this, path2);
                 if (this.children.isEmpty()) {
                     this.children = new ArrayList<Table>();
                 }
@@ -1246,9 +1173,7 @@ public class RolapStar {
          * used in its left join condition. This is used by the AggTableManager
          * while characterizing the fact table columns.
          */
-        public RolapStar.Table findTableWithLeftJoinCondition(
-            final String columnName)
-        {
+        public RolapStar.Table findTableWithLeftJoinCondition(final String columnName) {
             Util.deprecated("obsolete", true);
             return null;
         }
@@ -1258,9 +1183,7 @@ public class RolapStar {
          * mapping from for the aggregate join condition is valid. It returns
          * the child table with the matching left join condition.
          */
-        public RolapStar.Table findTableWithLeftCondition(
-            final RolapSchema.PhysExpr left)
-        {
+        public RolapStar.Table findTableWithLeftCondition(final RolapSchema.PhysExpr left) {
             Util.deprecated("obsolete", true);
             return null;
         }
@@ -1322,9 +1245,7 @@ public class RolapStar {
         }
 
         private RolapSchema.PhysHop getLastHop() {
-            return path.hopList.size() == 1
-                ? null
-                : path.hopList.get(path.hopList.size() - 1);
+            return path.hopList.size() == 1 ? null : path.hopList.get(path.hopList.size() - 1);
         }
 
         /**
@@ -1345,10 +1266,7 @@ public class RolapStar {
         private final RolapSchema.PhysExpr left;
         private final RolapSchema.PhysExpr right;
 
-        Condition(
-            RolapSchema.PhysExpr left,
-            RolapSchema.PhysExpr right)
-        {
+        Condition(RolapSchema.PhysExpr left, RolapSchema.PhysExpr right) {
             assert left != null;
             assert right != null;
 
@@ -1356,9 +1274,7 @@ public class RolapStar {
             if (!(left instanceof RolapSchema.PhysRealColumn)) {
                 // TODO: Will this ever print?? if not then left should be
                 // of type MondrianDef.Column.
-                LOGGER.debug(
-                    "Condition.left NOT Column: "
-                    + left.getClass().getName());
+                LOGGER.debug("Condition.left NOT Column: " + left.getClass().getName());
             }
             this.left = left;
             this.right = right;
@@ -1385,8 +1301,7 @@ public class RolapStar {
                 return false;
             }
             Condition that = (Condition) obj;
-            return this.left.equals(that.left)
-                   && this.right.equals(that.right);
+            return this.left.equals(that.left) && this.right.equals(that.right);
         }
 
         public String toString() {

@@ -20,6 +20,8 @@ import mondrian.rolap.cache.*;
 import mondrian.rolap.sql.*;
 import mondrian.spi.*;
 
+import mondrian.util.Pair;
+import mondrian.xmla.XmlaRequestContext;
 import org.apache.commons.collections.*;
 import org.apache.log4j.Logger;
 
@@ -205,6 +207,8 @@ public abstract class RolapNativeSet extends RolapNative {
         }
 
         protected TupleList executeList(final TupleReader tr) {
+            XmlaRequestContext context = XmlaRequestContext.localContext.get();
+            XmlaRequestContext.QueryPage queryPage = context.queryPage;
             tr.setMaxRows(maxRows);
             for (CrossJoinArg arg : args) {
                 addLevel(tr, arg);
@@ -224,7 +228,19 @@ public abstract class RolapNativeSet extends RolapNative {
             List<Object> key = new ArrayList<Object>();
             key.add(tr.getCacheKey());
             key.addAll(Arrays.asList(args));
-
+            // SmartBI 分页获取
+            if (context.queryPage != null) {
+                if (tr instanceof SqlTupleReader) {
+                    RolapEvaluator evaluator = (RolapEvaluator) ((SqlTupleReader) tr).constraint.getEvaluator();
+                    List<RolapMember> rolapMembers = evaluator.getSlicerMembers();
+                    key.add(rolapMembers);
+                }
+                if (context.queryPage.inOnePage) {
+                    key.add(context.queryPage.startPage);
+                } else {
+                    key.add(new Pair<>(context.queryPage.queryStart, context.queryPage.queryEnd));
+                }
+            }
             TupleList result = cache.get(key);
             boolean hasEnumTargets = (tr.getEnumTargetCount() > 0);
             if (result != null && !hasEnumTargets) {
@@ -232,8 +248,14 @@ public abstract class RolapNativeSet extends RolapNative {
                     TupleEvent e = new TupleEvent(this, tr);
                     listener.foundInCache(e);
                 }
-                return new DelegatingTupleList(
-                    args.length, Util.<List<Member>>cast(result));
+                result = new DelegatingTupleList(
+                        args.length, Util.<List<Member>>cast(result));
+                if (context.queryPage != null && context.queryPage.inOnePage) {
+                    if (result.size() >= context.queryPage.pageEnd) {
+                        result = result.subList(context.queryPage.pageStart, context.queryPage.pageEnd);
+                    }
+                }
+                return result;
             }
 
             // execute sql and store the result
@@ -272,6 +294,11 @@ public abstract class RolapNativeSet extends RolapNative {
                     }
                 } else {
                     cache.put(key, result);
+                }
+            }
+            if (context.queryPage != null && context.queryPage.inOnePage) {
+                if (result.size() >= context.queryPage.pageEnd) {
+                    result = result.subList(context.queryPage.pageStart, context.queryPage.pageEnd);
                 }
             }
             return filterInaccessibleTuples(result);

@@ -58,7 +58,7 @@ public class SegmentBuilder {
                     sb.getNullAxisFlags()[i]);
         }
         final SegmentDataset dataSet = createDataset(sb, axes);
-        return new SegmentWithData(segment, dataSet, axes);
+        return new SegmentWithData(segment, dataSet, axes, false);
     }
 
     /**
@@ -177,7 +177,7 @@ public class SegmentBuilder {
             predicateList.toArray(
                 new StarColumnPredicate[predicateList.size()]),
             new ExcludedRegionList(header),
-            compoundPredicates);
+            compoundPredicates, false);
     }
 
     private static List<Comparable> getColumnValsAtCellKey(
@@ -538,6 +538,7 @@ public class SegmentBuilder {
         }
         final SegmentHeader header =
             new SegmentHeader(
+                    null,
                 firstHeader.schemaName,
                 firstHeader.schemaChecksum,
                 firstHeader.cubeName,
@@ -772,6 +773,7 @@ public class SegmentBuilder {
         }
         final RolapSchema schema = segment.star.getSchema();
         return new SegmentHeader(
+            segment,
             schema.getName(),
             schema.getChecksum(),
             segment.measure.getCubeName(),

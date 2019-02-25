@@ -394,30 +394,21 @@ public class RolapSchemaReader
                 constraint = sqlConstraintFactory.getMemberChildrenConstraint(null);
             }
 
-            List<RolapMember> children = null;
-//            if (parent.getParentMember() == null && !parent.getUniqueName().contains("Hierarchy")) {
-//                final Larders.LarderBuilder builder = new Larders.LarderBuilder();
-//                String nameValue = ((Id.NameSegment) childName).getName();
-//                String captionValue = parent.getUniqueName().replaceFirst("\\[All.*?\\]", "[" + nameValue + "]");
-//                RolapMember parentMember = parent;
-//                RolapCubeLevel childLevel = parent.getLevel().getChildLevel();
-//
-//                builder.add(mondrian.olap.Property.NAME, nameValue);
-//
-//                if (captionValue != null) {
-//                    final String caption = captionValue.toString();
-//                    if (!caption.equals(nameValue)) {
-//                        builder.caption(caption);
-//                    }
-//                }
-//                RolapMemberBase member = new RolapMemberBase(parentMember, childLevel, null, Member.MemberType.REGULAR,
-//                        RolapMemberBase.deriveUniqueName(parentMember, childLevel, nameValue, false), builder.build());
-//
-//                children = new LinkedList<>();
-//                children.add(member);
-//            } else {
-            children = internalGetMemberChildren(parent, constraint);
-//            }
+            List<RolapMember> children;
+            if (parent.getParentMember() == null) {
+                final Larders.LarderBuilder builder = new Larders.LarderBuilder();
+                String nameValue = ((Id.NameSegment) childName).getName();
+                builder.add(mondrian.olap.Property.NAME, nameValue);
+                RolapMember parentMember = parent;
+                RolapCubeLevel childLevel = parent.getLevel().getChildLevel();
+                RolapMemberBase member = new RolapMemberBase(parentMember, childLevel, nameValue,
+                        Member.MemberType.REGULAR,
+                        RolapMemberBase.deriveUniqueName(parentMember, childLevel, nameValue, false), builder.build());
+                children = new LinkedList<>();
+                children.add(member);
+            } else {
+                children = internalGetMemberChildren(parent, constraint);
+            }
             if (children.size() > 0) {
                 return RolapUtil.findBestMemberMatch(children, parent, children.get(0).getLevel(), childName,
                         matchType);
