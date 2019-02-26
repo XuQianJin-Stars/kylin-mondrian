@@ -54,6 +54,7 @@ import mondrian.olap.Util;
 import mondrian.olap.type.StringType;
 import mondrian.rolap.sql.MemberChildrenConstraint;
 import mondrian.rolap.sql.TupleConstraint;
+import mondrian.xmla.XmlaRequestContext;
 
 /**
  * A <code>RolapSchemaReader</code> allows you to read schema objects while
@@ -395,7 +396,9 @@ public class RolapSchemaReader
             }
 
             List<RolapMember> children;
-            if (parent.getParentMember() == null) {
+            XmlaRequestContext context = XmlaRequestContext.localContext.get();
+            if (parent.getParentMember() == null && (!parent.getUniqueName().contains("Hierarchy")
+                    || context.clientType.equals(XmlaRequestContext.ClientType.SMARTBI))) {
                 final Larders.LarderBuilder builder = new Larders.LarderBuilder();
                 String nameValue = ((Id.NameSegment) childName).getName();
                 builder.add(mondrian.olap.Property.NAME, nameValue);
