@@ -11,7 +11,6 @@ package mondrian.spi;
 
 import mondrian.olap.Util;
 import mondrian.rolap.BitKey;
-import mondrian.rolap.agg.Segment;
 import mondrian.util.ByteString;
 
 import java.io.Serializable;
@@ -56,7 +55,6 @@ public class SegmentHeader implements Serializable {
     public final String rolapStarFactTableName;
     public final BitKey constrainedColsBitKey;
     private final int hashCode;
-    private final Segment segment;
     private ByteString uniqueID;
     private String description;
     public final ByteString schemaChecksum;
@@ -79,7 +77,6 @@ public class SegmentHeader implements Serializable {
      * @param excludedRegions Excluded regions. (Must not be null, but typically
      */
     public SegmentHeader(
-        Segment segment,
         String schemaName,
         ByteString schemaChecksum,
         String cubeName,
@@ -90,7 +87,6 @@ public class SegmentHeader implements Serializable {
         BitKey constrainedColsBitKey,
         List<SegmentColumn> excludedRegions)
     {
-        this.segment = segment;
         this.constrainedColumns = constrainedColumns;
         this.excludedRegions = excludedRegions;
         this.schemaName = schemaName;
@@ -113,11 +109,6 @@ public class SegmentHeader implements Serializable {
         hash = Util.hash(hash, schemaChecksum);
         hash = Util.hash(hash, cubeName);
         hash = Util.hash(hash, measureName);
-        if (this.segment != null) {
-            hash = Util.hash(hash, this.segment.page);
-            hash = Util.hash(hash, this.segment.from);
-            hash = Util.hash(hash, this.segment.to);
-        }
         for (SegmentColumn col : this.constrainedColumns) {
             hash = Util.hash(hash, col.columnExpression);
             if (col.values != null) {
@@ -165,7 +156,6 @@ public class SegmentHeader implements Serializable {
         }
         return
             new SegmentHeader(
-                    null,
                 schemaName,
                 schemaChecksum,
                 cubeName,
@@ -252,7 +242,7 @@ public class SegmentHeader implements Serializable {
         }
         assert newRegions.size() > 0;
         return
-            new SegmentHeader(null,
+            new SegmentHeader(
                 schemaName,
                 schemaChecksum,
                 cubeName,

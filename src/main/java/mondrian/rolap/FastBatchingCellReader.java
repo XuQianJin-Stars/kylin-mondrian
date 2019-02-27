@@ -602,15 +602,6 @@ class BatchLoader {
             // Caching is disabled. Return always false.
             return false;
         }
-        // 如果正在翻 segment, 则默认重新获取
-        XmlaRequestContext context = XmlaRequestContext.localContext.get();
-        if (context.queryPage != null) {
-            int prevPage = (context.queryPage.queryStart - 1) / context.queryPage.pageSize;
-            int nextPage = (context.queryPage.queryEnd - 1) / context.queryPage.pageSize;
-            if (prevPage != nextPage) {
-                return false;
-            }
-        }
 
         // Is request matched by one of the headers we intend to load?
         final Map<String, Comparable> mappedCellValues =

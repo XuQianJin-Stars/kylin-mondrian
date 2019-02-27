@@ -46,7 +46,6 @@ import mondrian.rolap.aggmatcher.AggStar;
 import mondrian.rolap.sql.SqlQuery;
 import mondrian.server.Locus;
 import mondrian.spi.Dialect;
-import mondrian.xmla.XmlaRequestContext;
 
 /**
  * A <code>RolapStar</code> is a star schema. It is the means to read cell
@@ -145,27 +144,6 @@ public class RolapStar {
 
         final Bar bar = localBars.get();
         for (SegmentWithData segment : Util.GcIterator.over(bar.segmentRefs)) {
-            XmlaRequestContext context = XmlaRequestContext.localContext.get();
-            if (context.queryPage != null) {
-                if (context.queryPage.inOnePage) {
-                    int page = context.queryPage.startPage;
-                    if (page != segment.page) {
-                        continue;
-                    }
-                } else {
-                    int from = context.queryPage.queryStart;
-                    int to = context.queryPage.queryEnd;
-                    if (from != segment.from || to != segment.to) {
-                        continue;
-                    }
-                }
-                // 如果正在跨segment过程中，且是旧的 segment, 则认为已经失效
-                int prevPage = (context.queryPage.queryStart - 1) / context.queryPage.pageSize;
-                int nextPage = (context.queryPage.queryEnd - 1) / context.queryPage.pageSize;
-                if (prevPage != nextPage && !segment.isCreate) {
-                    continue;
-                }
-            }
             if (!segment.getConstrainedColumnsBitKey().equals(request.getConstrainedColumnsBitKey())) {
                 continue;
             }

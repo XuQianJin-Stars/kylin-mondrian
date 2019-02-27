@@ -126,22 +126,23 @@ public class SmartMemberReader implements MemberReader {
         synchronized (cacheHelper) {
             XmlaRequestContext context = XmlaRequestContext.localContext.get();
             boolean pageFetchFlag = context.queryPage != null && context.queryPage.inOnePage;
+            boolean supportCache = !XmlaRequestContext.ClientType.SMARTBI.equals(context.clientType);
 
             List<RolapMember> members =
                 cacheHelper.getLevelMembersFromCache(level, constraint);
-            if (members != null) {
-                if (pageFetchFlag) {
-                    return members.subList(context.queryPage.pageStart, context.queryPage.pageEnd);
-                }
+            if (members != null && supportCache) {
                 return members;
             }
-
-            members =
-                source.getMembersInLevel(
-                    level, constraint);
-            cacheHelper.putLevelMembersInCache(level, constraint, members);
+            members = source.getMembersInLevel(level, constraint);
+            if (supportCache) {
+                cacheHelper.putLevelMembersInCache(level, constraint, members);
+            }
             if (pageFetchFlag) {
-                return members.subList(context.queryPage.pageStart, context.queryPage.pageEnd);
+                if (context.queryPage.pageEnd <= members.size()) {
+                    return members.subList(context.queryPage.pageStart, context.queryPage.pageEnd);
+                } else if (context.queryPage.queryStart < members.size()) {
+                    return members.subList(context.queryPage.pageStart, members.size());
+                }
             }
             return members;
         }

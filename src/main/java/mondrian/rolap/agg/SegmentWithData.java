@@ -68,7 +68,7 @@ public class SegmentWithData extends Segment {
      */
     public SegmentWithData(Segment segment, SegmentDataset data, SegmentAxis[] axes, boolean isCreate) {
         this(segment.getStar(), segment.getConstrainedColumnsBitKey(), segment.getColumns(), segment.measure,
-                segment.predicates, segment.getExcludedRegions(), segment.compoundPredicateList, data, axes, isCreate);
+                segment.predicates, segment.getExcludedRegions(), segment.compoundPredicateList, data, axes);
         if (segment instanceof SegmentWithData) {
             throw new AssertionError();
         }
@@ -81,14 +81,11 @@ public class SegmentWithData extends Segment {
      * @param predicates List of axes; each is a constraint plus a list of
     *     values.
      * @param excludedRegions List of regions which are not in this segment.
-     * @param isCreate
      */
     private SegmentWithData(RolapStar star, BitKey constrainedColumnsBitKey, RolapStar.Column[] columns,
             RolapStar.Measure measure, StarColumnPredicate[] predicates, List<ExcludedRegion> excludedRegions,
-            final List<StarPredicate> compoundPredicateList, SegmentDataset data, SegmentAxis[] axes,
-            boolean isCreate) {
-        super(star, constrainedColumnsBitKey, columns, measure, predicates, excludedRegions, compoundPredicateList,
-                isCreate);
+            final List<StarPredicate> compoundPredicateList, SegmentDataset data, SegmentAxis[] axes) {
+        super(star, constrainedColumnsBitKey, columns, measure, predicates, excludedRegions, compoundPredicateList);
         this.axes = axes;
         this.data = data;
     }
@@ -297,7 +294,7 @@ public class SegmentWithData extends Segment {
 
         // Create a segment with the new data set.
         return new SegmentWithData(star, constrainedColumnsBitKey, columns, measure, newPredicates, excludedRegions,
-                compoundPredicateList, newData, newAxes, false);
+                compoundPredicateList, newData, newAxes);
     }
 
     /**

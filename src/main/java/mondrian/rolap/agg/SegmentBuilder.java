@@ -177,7 +177,7 @@ public class SegmentBuilder {
             predicateList.toArray(
                 new StarColumnPredicate[predicateList.size()]),
             new ExcludedRegionList(header),
-            compoundPredicates, false);
+            compoundPredicates);
     }
 
     private static List<Comparable> getColumnValsAtCellKey(
@@ -538,7 +538,6 @@ public class SegmentBuilder {
         }
         final SegmentHeader header =
             new SegmentHeader(
-                    null,
                 firstHeader.schemaName,
                 firstHeader.schemaChecksum,
                 firstHeader.cubeName,
@@ -773,7 +772,6 @@ public class SegmentBuilder {
         }
         final RolapSchema schema = segment.star.getSchema();
         return new SegmentHeader(
-            segment,
             schema.getName(),
             schema.getChecksum(),
             segment.measure.getCubeName(),
