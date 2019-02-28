@@ -2346,14 +2346,14 @@ public class FunUtil extends Util {
         final boolean includeCalcMembers)
     {
         SchemaReader sr = evaluator.getSchemaReader();
-        if (evaluator.isNonEmpty()) {
+//        if (evaluator.isNonEmpty()) {
             List<Member> members = sr.getLevelMembers(level, evaluator);
             if (includeCalcMembers) {
                 return addLevelCalculatedMembers(sr, level, members);
             }
             return members;
-        }
-        return sr.getLevelMembers(level, includeCalcMembers);
+//        }
+//        return sr.getLevelMembers(level, evaluator);
     }
 
     static TupleList levelMembers(
