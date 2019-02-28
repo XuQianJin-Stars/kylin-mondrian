@@ -49,7 +49,7 @@ public class FileRepository implements Repository {
             "mondrian.server.DynamicContentFinder$executorService");
 
     private ServerInfo serverInfo;
-    private final ScheduledFuture<?> scheduledFuture;
+//    private final ScheduledFuture<?> scheduledFuture;
     private final CatalogLocator locator;
 
     public FileRepository(
@@ -63,8 +63,9 @@ public class FileRepository implements Repository {
             Util.parseInterval(
                 MondrianProperties.instance().XmlaSchemaRefreshInterval.get(),
                 TimeUnit.MILLISECONDS);
-        scheduledFuture = executorService.scheduleWithFixedDelay(
+       /* scheduledFuture = executorService.scheduleWithFixedDelay(
             new Runnable() {
+                @Override
                 public void run() {
                     synchronized (SERVER_INFO_LOCK) {
                         serverInfo = null;
@@ -73,9 +74,10 @@ public class FileRepository implements Repository {
             },
             0,
             interval.left,
-            interval.right);
+            interval.right);*/
     }
 
+    @Override
     public List<Map<String, Object>> getDatabases(
         RolapConnection connection)
     {
@@ -87,6 +89,7 @@ public class FileRepository implements Repository {
         return propsList;
     }
 
+    @Override
     public OlapConnection getConnection(
         MondrianServer server,
         String databaseName,
@@ -166,8 +169,9 @@ public class FileRepository implements Repository {
         return ((OlapWrapper) connection).unwrap(OlapConnection.class);
     }
 
+    @Override
     public void shutdown() {
-        scheduledFuture.cancel(true);
+//        scheduledFuture.cancel(true);
         repositoryContentFinder.shutdown();
     }
 
@@ -248,6 +252,7 @@ public class FileRepository implements Repository {
         }
     }
 
+    @Override
     public List<String> getCatalogNames(
         RolapConnection connection,
         String databaseName)
@@ -257,6 +262,7 @@ public class FileRepository implements Repository {
                 .catalogMap.keySet());
     }
 
+    @Override
     public List<String> getDatabaseNames(
         RolapConnection connection)
     {
@@ -264,6 +270,7 @@ public class FileRepository implements Repository {
             getServerInfo().datasourceMap.keySet());
     }
 
+    @Override
     public Map<String, RolapSchema> getRolapSchemas(
         RolapConnection connection,
         String databaseName,
@@ -316,7 +323,24 @@ public class FileRepository implements Repository {
         }
 
         private RolapSchema getRolapSchema() {
-            if (rolapSchema == null) {
+            //get RolapSchema by rolapConnection every time,
+            //because RolapSchema need to be refresh when catalog.xml has been changed
+            RolapConnection rolapConnection = null;
+            try {
+                rolapConnection =
+                        (RolapConnection)
+                                DriverManager.getConnection(
+                                        connectString, this.locator);
+                rolapSchema = rolapConnection.getSchema();
+
+                return rolapSchema;
+            } finally {
+                if (rolapConnection != null) {
+                    rolapConnection.close();
+                }
+            }
+
+           /* if (rolapSchema == null) {
                 RolapConnection rolapConnection = null;
                 try {
                     rolapConnection =
@@ -331,6 +355,7 @@ public class FileRepository implements Repository {
                 }
             }
             return rolapSchema;
+            */
         }
     }
 }
