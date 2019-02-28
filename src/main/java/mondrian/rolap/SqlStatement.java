@@ -23,6 +23,7 @@ import mondrian.server.monitor.SqlStatementExecuteEvent;
 import mondrian.server.monitor.SqlStatementStartEvent;
 import mondrian.util.Counters;
 import mondrian.util.DelegatingInvocationHandler;
+import mondrian.xmla.XmlaRequestContext;
 import org.apache.log4j.Logger;
 
 import javax.sql.DataSource;
@@ -193,13 +194,15 @@ public class SqlStatement implements DBStatement {
 
 //            this.resultSet = statement.executeQuery(sql);
             // if cache enalbe
+            XmlaRequestContext context = XmlaRequestContext.localContext.get();
+            String cacheKey = context.currentUser + "_" + context.currentProject + ":" + sql;
             if (MondrianProperties.instance().SqlCache.get()) {
-                CachedRowSet cachedResultSet = QUERY_CACHE.getIfPresent(sql);
+                CachedRowSet cachedResultSet = QUERY_CACHE.getIfPresent(cacheKey);
                 if (cachedResultSet == null) {
                     try (ResultSet rs = statement.executeQuery(sql)) {
                         CachedRowSet rowSet = new FixedCachedRowSetImpl();
                         rowSet.populate(rs);
-                        QUERY_CACHE.put(sql, rowSet);
+                        QUERY_CACHE.put(cacheKey, rowSet);
                         this.resultSet = rowSet.createCopyNoConstraints();
                     }
                 } else {

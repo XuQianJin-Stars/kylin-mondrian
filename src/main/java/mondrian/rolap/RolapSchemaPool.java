@@ -157,7 +157,7 @@ class RolapSchemaPool {
 
         if (useContentChecksum) {
             final ByteString md5Bytes =
-                new ByteString(Util.digestMd5(catalogStr));
+                new ByteString(Util.digestMd5(catalogStr + catalogUrl));
             final SoftReference<RolapSchema> ref =
                 mapMd5ToSchema.get(md5Bytes);
             if (LOGGER.isDebugEnabled()) {
