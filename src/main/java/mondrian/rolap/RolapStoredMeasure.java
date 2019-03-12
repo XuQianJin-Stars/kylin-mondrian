@@ -13,6 +13,8 @@
 package mondrian.rolap;
 
 
+import java.util.List;
+
 /**
  * A measure which is implemented by a SQL column or SQL expression (as opposed
  * to a {@link RolapCalculatedMember}.
@@ -48,6 +50,8 @@ public interface RolapStoredMeasure extends RolapMeasure {
     RolapStar.Measure getStarMeasure();
 
     RolapMeasureGroup getMeasureGroup();
+
+    List<ExcludeDim> getExcludeDims();
 }
 
 // End RolapStoredMeasure.java

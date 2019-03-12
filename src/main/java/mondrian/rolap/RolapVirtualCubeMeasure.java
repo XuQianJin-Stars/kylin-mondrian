@@ -11,6 +11,9 @@ package mondrian.rolap;
 
 import mondrian.olap.*;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Measure which is defined in a virtual cube, and based on a stored measure
  * in one of the virtual cube's base cubes.
@@ -48,6 +51,11 @@ class RolapVirtualCubeMeasure
             false);
         this.cubeMeasure = cubeMeasure;
         this.larder = larder;
+    }
+
+    @Override
+    public List<ExcludeDim> getExcludeDims() {
+        return this.cubeMeasure.getExcludeDims();
     }
 
     public Object getPropertyValue(Property property) {

@@ -369,6 +369,21 @@ public class RolapCubeLevel extends RolapLevel {
             CellRequest request)
         {
             assert member.getLevel() == cubeLevel;
+            // exclude 详细级别的 measure 需要去除指定的视图维度
+            String levelName = cubeLevel.name;
+            String dimensionName = cubeLevel.getDimension().getName();
+            for (RolapStoredMeasure measure : measureGroup.measureList) {
+                if (measure.getStarMeasure().equals(request.getMeasure())) {
+                    for (ExcludeDim dim : measure.getExcludeDims()) {
+                        if (dim.getDimension().equals(dimensionName)) {
+                            if (dim.isExcludeAll() || dim.getExcludeCols().contains(levelName)) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+
             final List<Comparable> key = member.getKeyAsList();
             if (key.isEmpty()) {
                 if (member == member.getHierarchy().getNullMember()) {

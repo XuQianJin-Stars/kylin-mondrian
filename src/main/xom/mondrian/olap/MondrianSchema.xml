@@ -1091,7 +1091,7 @@ version 3.x schemas.</p>
                 Default table for Column objects nested within this Attribute.
             </Doc>
         </Attribute>
-        <Attribute name="keyColumn">
+        <Attribute name="keyColumn" required="false">
             <Doc>
                 The name of the column that holds the unique identifier of
                 this Attribute. See also the Key sub-element.
@@ -1713,7 +1713,8 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
                     Arguments.class,
                     Annotations.class,
                     CalculatedMemberProperty.class,
-                    CellFormatter.class)
+                    CellFormatter.class,
+                    Excludes.class)
                 {
                     MeasureElement[] getArray() {
                         return childArray == null ? EMPTY : childArray;
@@ -1733,6 +1734,9 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
             }
             public NamedList<Annotation> getAnnotations() {
                 return children.only(Annotations.EMPTY).list();
+            }
+            public NamedList<Exclude> getExcludeDimensions() {
+                return children.only(Excludes.EMPTY).list();
             }
             ]]>
         </Code>
@@ -3776,6 +3780,78 @@ PARENT&#160;&#160;&#160;&#160;CHILD&#160;&#160;&#160;&#160;DISTANCE<br/>
                         }
                     }
                 );
+            }
+            ]]>
+        </Code>
+    </Element>
+
+    <Element type="Excludes" class="Holder, MeasureElement">
+        <Doc>excludes dimensions of a measure</Doc>
+        <Array name="array" type="Exclude"/>
+        <Code>
+            <![CDATA[
+            private static final Excludes EMPTY;
+            static {
+                EMPTY = new Excludes();
+                EMPTY.array = new Exclude[0];
+            }
+            public Excludes copy() {
+                Excludes c = new Excludes();
+                c.array = array.clone();
+                return c;
+            }
+            public NamedList<Exclude> list() {
+                return new NamedListImpl<Exclude>(
+                    new MutableArrayList<Exclude>() {
+                        protected Exclude[] getArray() {
+                            return array == null ? EMPTY.array : array;
+                        }
+                        protected void setArray(Exclude[] ts) {
+                            array = ts;
+                        }
+                    }
+                );
+            }
+            ]]>
+        </Code>
+    </Element>
+
+    <Element type="Exclude" class="NamedElement">
+        <Doc>
+            User-defined property value.
+        </Doc>
+        <Attribute name="name" required="false">
+            <Doc>
+                Name of the annotation.
+            </Doc>
+        </Attribute>
+        <Attribute name="dimension" required="true">
+            <Doc>
+                Name of the annotation.
+            </Doc>
+        </Attribute>
+        <Attribute name="excludeAll" required="false" type="Boolean" default="false">
+            <Doc>
+                Name of the annotation.
+            </Doc>
+        </Attribute>
+        <Array name="attributes" type="Attribute"/>
+        <Code>
+            <![CDATA[
+            public String getNameAttribute() {
+                return name;
+            }
+
+            public String getDimension() {
+                return dimension;
+            }
+
+            public boolean isExcludeAll() {
+                return excludeAll;
+            }
+
+            public List<Attribute> getExcludeAttributes() {
+                return attributes == null ? Collections.EMPTY_LIST : Arrays.asList(attributes);
             }
             ]]>
         </Code>

@@ -2388,6 +2388,19 @@ public class RolapSchemaLoader {
                 aggregator,
                 datatype,
                 larder);
+        // set exclude dimension
+        for (MondrianDef.Exclude exclude : xmlMeasure.getExcludeDimensions()) {
+            ExcludeDim dim = new ExcludeDim();
+            dim.setDimension(exclude.getDimension());
+            dim.setExcludeAll(exclude.excludeAll);
+            if (exclude.getExcludeAttributes() != null) {
+                for (MondrianDef.Attribute attribute : exclude.getExcludeAttributes()) {
+                    dim.addExcludeCols(attribute.name);
+                }
+            }
+            measure.getExcludeDims().add(dim);
+        }
+
         measureGroup.measureList.add(measure);
         validator.putXml(measure, xmlMeasure);
 

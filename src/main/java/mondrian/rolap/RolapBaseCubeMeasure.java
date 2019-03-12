@@ -13,6 +13,9 @@ import mondrian.olap.*;
 import mondrian.spi.CellFormatter;
 import mondrian.spi.Dialect;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Measure which is computed from a SQL column (or expression).
  */
@@ -40,6 +43,8 @@ public class RolapBaseCubeMeasure
 
     private final RolapMeasureGroup measureGroup;
     private final Dialect.Datatype datatype;
+
+    private List<ExcludeDim> excludeDims = new ArrayList<>();
 
     /**
      * Creates a RolapBaseCubeMeasure.
@@ -75,6 +80,15 @@ public class RolapBaseCubeMeasure
         this.expression = expression;
         this.aggregator = aggregator;
         this.datatype = datatype;
+    }
+
+    @Override
+    public List<ExcludeDim> getExcludeDims() {
+        return this.excludeDims;
+    }
+
+    public void setExcludeDims(List<ExcludeDim> excludeDims) {
+        this.excludeDims = excludeDims;
     }
 
     public RolapSchema.PhysColumn getExpr() {
